@@ -16,8 +16,8 @@ export class ImageTracker {
 
   public matchFeatures(framePoints: Point[], frameWidth: number, frameHeight: number): FeatureMatch[] {
     const matches: FeatureMatch[] = [];
-    const maxDistance = 15; // Increased threshold for more lenient matching
-    const minMatchRatio = 0.15; // Minimum ratio of points that need to match
+    const maxDistance = 15; // Original strict threshold
+    const minMatchRatio = 0.15; // Original ratio - require 15% of points to match
 
     // Calculate scale factors
     const scaleX = frameWidth / this.targetWidth;
@@ -27,7 +27,7 @@ export class ImageTracker {
     const usedFramePoints = new Set<number>();
     const usedTargetPoints = new Set<number>();
 
-    // First pass: Find best matches
+    // First pass: Find best matches with strict distance threshold
     framePoints.forEach((framePoint, queryIdx) => {
       let bestMatch = {
         trainIdx: -1,
@@ -64,7 +64,7 @@ export class ImageTracker {
 
     // Only return matches if we have enough of them
     const minMatches = Math.max(
-      3, // Absolute minimum
+      3, // Original minimum of 3 matches required
       Math.floor(this.targetPoints.length * minMatchRatio)
     );
 

@@ -163,30 +163,39 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
   // Add effect to handle AR video playback
   useEffect(() => {
-    if (isTracking && arVideoRef.current) {
+    const videoElement = arVideoRef.current; // Store ref value
+    
+    if (isTracking && videoElement) {
       const playVideo = async () => {
         try {
           console.log('Attempting to play AR video...');
-          const video = arVideoRef.current;
-          if (!video) return;
+          if (!videoElement) return;
 
-          // Reset video
-          video.currentTime = 0;
+          // Don't reset video if it's already playing
+          if (!videoElement.paused) {
+            console.log('Video is already playing, skipping...');
+            return;
+          }
+
+          // Only reset if video has ended or hasn't started
+          if (videoElement.ended || videoElement.currentTime === 0) {
+            videoElement.currentTime = 0;
+          }
           
           // Ensure video is loaded
-          if (video.readyState < 4) {
+          if (videoElement.readyState < 4) {
             await new Promise((resolve) => {
-              video.addEventListener('canplaythrough', resolve, { once: true });
-              video.load();
+              videoElement.addEventListener('canplaythrough', resolve, { once: true });
+              videoElement.load();
             });
           }
 
           // Try to play
-          await video.play();
+          await videoElement.play();
           console.log('Video playing:', { 
-            currentTime: video.currentTime,
-            duration: video.duration,
-            paused: video.paused
+            currentTime: videoElement.currentTime,
+            duration: videoElement.duration,
+            paused: videoElement.paused
           });
         } catch (error) {
           console.error('Failed to play AR video:', error);
@@ -194,6 +203,16 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
       };
 
       playVideo();
+
+      // Add cleanup to prevent video reset on re-render
+      return () => {
+        if (videoElement && !videoElement.paused) {
+          console.log('Preserving video playback state');
+        }
+      };
+    } else if (!isTracking && videoElement) {
+      // Pause but don't reset when tracking is lost
+      videoElement.pause();
     }
   }, [isTracking]);
 
@@ -224,7 +243,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         }}
       />
 
-      {/* Debug Layer */}
+      {/* Debug Layer - Hidden but still functional */}
       <canvas 
         ref={canvasRef}
         style={{
@@ -234,7 +253,8 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           width: '100%',
           height: '100%',
           pointerEvents: 'none',
-          transform: 'translateZ(1px)'
+          transform: 'translateZ(1px)',
+          display: 'none' // Hide the canvas
         }}
       />
 
@@ -249,15 +269,17 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         preload="auto"
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          transform: 'translateZ(2px)',
+          top: '50%',
+          left: '50%',
+          width: '50%',
+          height: '50%',
+          objectFit: 'contain',
+          transform: 'translate(-50%, -50%) translateZ(2px)',
           opacity: isTracking ? 1 : 0,
           transition: 'opacity 0.3s ease',
-          pointerEvents: 'none'
+          pointerEvents: 'none',
+          backgroundColor: 'transparent',
+          mixBlendMode: 'normal'
         }}
         onLoadedMetadata={(e) => {
           console.log('AR video metadata loaded:', {
@@ -279,24 +301,6 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           console.error('AR video error:', e);
         }}
       />
-
-      {/* Debug Info */}
-      <div style={{
-        position: 'absolute',
-        top: 10,
-        left: 10,
-        background: 'rgba(0,0,0,0.5)',
-        color: 'white',
-        padding: 10,
-        borderRadius: 5,
-        transform: 'translateZ(3px)',
-        zIndex: 1000
-      }}>
-        <div>Tracking: {isTracking ? '✅' : '❌'}</div>
-        <div>Video URL: {videoUrl ? '✅' : '❌'}</div>
-        <div>Video Ready: {arVideoRef.current?.readyState === 4 ? '✅' : '❌'}</div>
-        <div>Video Playing: {!arVideoRef.current?.paused ? '✅' : '❌'}</div>
-      </div>
     </div>
   );
 }
