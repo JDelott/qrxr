@@ -31,10 +31,26 @@ function App() {
     });
 
     try {
+      // First, create FormData to send the file
+      const formData = new FormData();
+      formData.append('image', file);
+
+      // Send to server
+      const response = await fetch('http://localhost:3000/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('Upload result:', result);
+
       // Create an image element to load the file
       const img = new Image();
       const objectUrl = URL.createObjectURL(file);
-      
       console.log('Created object URL:', objectUrl);
       
       img.onload = async () => {
@@ -74,12 +90,13 @@ function App() {
             console.log('Preview canvas not found');
           }
 
-          // Create tracking data
+          // Create tracking data using the uploaded URL from the server
           const newTrackingData: TrackingData = {
             width: img.width,
             height: img.height,
             features: features,
-            points: features.map(f => ({ pt: f.pt }))
+            points: features.map(f => ({ pt: f.pt })),
+            imageUrl: result.imageUrl // Use the URL from the server response
           };
 
           console.log('Setting tracking data:', newTrackingData);
@@ -167,6 +184,7 @@ function App() {
         onTrackingUpdate={(isTracking) => {
           console.log('Tracking status:', isTracking);
         }}
+        videoUrl="/videos/sneakarvid.mp4"
       />
       <button
         onClick={() => {

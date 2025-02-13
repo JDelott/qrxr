@@ -13,6 +13,7 @@ export interface TrackingData {
   height: number;
   features: Feature[];
   points: Array<{ pt: Point }>;
+  imageUrl: string;
 }
 
 export interface FeatureMatch {

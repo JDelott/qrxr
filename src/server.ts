@@ -3,8 +3,20 @@ const { Pool } = pkg;
 import express from 'express';
 import multer from 'multer';
 import cors from 'cors';
-import fs from 'fs';
 import sharp from 'sharp';
+import { S3Client, PutObjectCommand, ListObjectsCommand } from '@aws-sdk/client-s3';
+import { config } from 'dotenv';
+
+// Load environment variables
+config();
+
+// After config() call, add this logging
+console.log('Spaces Configuration:', {
+  region: process.env.VITE_SPACE_REGION,
+  spaceName: process.env.VITE_SPACE_NAME,
+  hasKey: !!process.env.VITE_SPACES_KEY,
+  hasSecret: !!process.env.VITE_SPACES_SECRET
+});
 
 const app = express();
 const port = 3000;
@@ -13,12 +25,22 @@ const port = 3000;
 app.use(cors());
 app.use(express.json());
 
-// Basic status route
-app.get('/api/status', (_req, res) => {
-  res.json({ 
-    status: 'ok',
-    message: 'Server is running'
-  });
+// Configure S3 client for Digital Ocean Spaces
+const s3Client = new S3Client({
+  endpoint: `https://${process.env.SPACE_REGION}.digitaloceanspaces.com`,
+  region: process.env.SPACE_REGION,
+  credentials: {
+    accessKeyId: process.env.SPACES_KEY!,
+    secretAccessKey: process.env.SPACES_SECRET!
+  }
+});
+
+// Configure multer for memory storage instead of disk
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
 });
 
 // Configure PostgreSQL connection
@@ -30,27 +52,31 @@ const pool = new Pool({
   port: 5432,
 });
 
-// Configure multer for image upload
-const storage = multer.diskStorage({
-  destination: './uploads',
-  filename: (_req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+async function uploadToSpaces(buffer: Buffer, originalname: string, mimetype: string): Promise<string> {
+  try {
+    const fileName = `${Date.now()}-${originalname}`;
+    
+    await s3Client.send(new PutObjectCommand({
+      Bucket: process.env.SPACE_NAME,
+      Key: fileName,
+      Body: buffer,
+      ACL: 'public-read',
+      ContentType: mimetype
+    }));
+
+    return `https://${process.env.SPACE_NAME}.${process.env.SPACE_REGION}.digitaloceanspaces.com/${fileName}`;
+  } catch (error) {
+    console.error('Error uploading to Spaces:', error);
+    throw error;
   }
-});
-
-const upload = multer({ storage });
-
-// Create uploads directory if it doesn't exist
-if (!fs.existsSync('./uploads')) {
-  fs.mkdirSync('./uploads');
 }
 
-async function processImageForTracking(imagePath: string) {
+async function processImageForTracking(imageBuffer: Buffer) {
   try {
-    console.log('Processing image:', imagePath);
+    console.log('Processing image from buffer');
     
     // Load and process image with Sharp
-    const image = sharp(imagePath);
+    const image = sharp(imageBuffer);
     const metadata = await image.metadata();
     
     // Get image dimensions
@@ -107,6 +133,26 @@ async function processImageForTracking(imagePath: string) {
   }
 }
 
+async function testSpacesConnection() {
+  try {
+    const response = await s3Client.send(new ListObjectsCommand({
+      Bucket: process.env.VITE_SPACE_NAME,
+      MaxKeys: 10
+    }));
+    
+    console.log('Current files in Space:', response.Contents?.map(item => ({
+      key: item.Key,
+      size: item.Size,
+      modified: item.LastModified
+    })));
+    
+    return true;
+  } catch (error) {
+    console.error('Spaces connection test failed:', error);
+    return false;
+  }
+}
+
 app.post('/api/upload', upload.single('image'), async (req: express.Request, res: express.Response): Promise<void> => {
   try {
     if (!req.file) {
@@ -115,10 +161,23 @@ app.post('/api/upload', upload.single('image'), async (req: express.Request, res
       return;
     }
 
-    console.log('File received:', req.file);
+    console.log('File received:', {
+      originalname: req.file.originalname,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    });
 
     try {
-      const trackingData = await processImageForTracking(req.file.path);
+      // Upload to Spaces first
+      const imageUrl = await uploadToSpaces(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype
+      );
+      console.log('Successfully uploaded to Spaces:', imageUrl);
+
+      // Process image after upload
+      const trackingData = await processImageForTracking(req.file.buffer);
       console.log('Tracking data generated:', {
         width: trackingData.width,
         height: trackingData.height,
@@ -135,8 +194,8 @@ app.post('/api/upload', upload.single('image'), async (req: express.Request, res
         ) VALUES ($1, $2, $3, $4, $5) RETURNING id`;
       
       const values = [
-        req.file.filename,
-        req.file.path,
+        req.file.originalname,
+        imageUrl, // Store the Spaces URL instead of local path
         new Date(),
         true,
         JSON.stringify(trackingData)
@@ -148,7 +207,8 @@ app.post('/api/upload', upload.single('image'), async (req: express.Request, res
       res.json({
         success: true,
         imageId: result.rows[0].id,
-        filename: req.file.filename,
+        filename: req.file.originalname,
+        imageUrl,
         trackingData
       });
     } catch (processError: unknown) {
@@ -161,6 +221,11 @@ app.post('/api/upload', upload.single('image'), async (req: express.Request, res
     const errorMessage = error instanceof Error ? error.message : 'Unknown upload error';
     res.status(500).json({ error: 'Upload failed', details: errorMessage });
   }
+});
+
+app.get('/api/test-spaces', async (_req, res) => {
+  const isConnected = await testSpacesConnection();
+  res.json({ success: isConnected });
 });
 
 // Start the server

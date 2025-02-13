@@ -4,9 +4,9 @@ import { FrameProcessor } from '../utils/frameProcessor';
 import { ImageTracker } from '../utils/tracker';
 
 interface CameraProps {
-  videoUrl: string;
   trackingData: TrackingData;
-  onTrackingUpdate?: (isTracking: boolean) => void;
+  onTrackingUpdate: (isTracking: boolean) => void;
+  videoUrl?: string; // Make videoUrl optional
 }
 
 function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
