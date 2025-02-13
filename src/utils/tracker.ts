@@ -16,13 +16,18 @@ export class ImageTracker {
 
   public matchFeatures(framePoints: Point[], frameWidth: number, frameHeight: number): FeatureMatch[] {
     const matches: FeatureMatch[] = [];
-    const maxDistance = 10; // Maximum pixel distance for a match
+    const maxDistance = 15; // Increased threshold for more lenient matching
+    const minMatchRatio = 0.15; // Minimum ratio of points that need to match
 
     // Calculate scale factors
     const scaleX = frameWidth / this.targetWidth;
     const scaleY = frameHeight / this.targetHeight;
 
-    // Simple nearest-neighbor matching with scale consideration
+    // Track matched points to prevent duplicates
+    const usedFramePoints = new Set<number>();
+    const usedTargetPoints = new Set<number>();
+
+    // First pass: Find best matches
     framePoints.forEach((framePoint, queryIdx) => {
       let bestMatch = {
         trainIdx: -1,
@@ -30,7 +35,8 @@ export class ImageTracker {
       };
 
       this.targetPoints.forEach((targetPoint, trainIdx) => {
-        // Scale target point to frame dimensions
+        if (usedTargetPoints.has(trainIdx)) return;
+
         const scaledTargetPoint = {
           x: targetPoint.x * scaleX,
           y: targetPoint.y * scaleY
@@ -45,16 +51,24 @@ export class ImageTracker {
         }
       });
 
-      if (bestMatch.trainIdx !== -1) {
+      if (bestMatch.trainIdx !== -1 && !usedFramePoints.has(queryIdx)) {
         matches.push({
           queryIdx,
           trainIdx: bestMatch.trainIdx,
           distance: bestMatch.distance
         });
+        usedFramePoints.add(queryIdx);
+        usedTargetPoints.add(bestMatch.trainIdx);
       }
     });
 
-    return matches;
+    // Only return matches if we have enough of them
+    const minMatches = Math.max(
+      3, // Absolute minimum
+      Math.floor(this.targetPoints.length * minMatchRatio)
+    );
+
+    return matches.length >= minMatches ? matches : [];
   }
 
   private getDistance(p1: Point, p2: Point): number {

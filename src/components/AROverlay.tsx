@@ -1,12 +1,15 @@
 import { useEffect, useRef } from 'react';
 import { Point, FeatureMatch } from '../types/tracking';
+import React from 'react';
 
 interface AROverlayProps {
   isTracking: boolean;
   matches: FeatureMatch[];
   framePoints: Point[];
   targetPoints: Point[];
-  videoUrl?: string; // New prop for video source
+  videoUrl: string;
+  style?: React.CSSProperties;
+  className?: string;
 }
 
 function AROverlay({ 
@@ -14,7 +17,7 @@ function AROverlay({
   matches, 
   framePoints, 
   targetPoints,
-  videoUrl = '/path/to/your/video.mp4' // Default video or from props
+  videoUrl
 }: AROverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -23,6 +26,17 @@ function AROverlay({
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
+
+    // Set canvas size to match parent container
+    const resizeCanvas = () => {
+      const parent = canvas.parentElement;
+      if (parent) {
+        canvas.width = parent.clientWidth;
+        canvas.height = parent.clientHeight;
+      }
+    };
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -49,7 +63,6 @@ function AROverlay({
       // Draw video onto canvas at tracked position
       try {
         ctx.save();
-        // Optional: add perspective transform here for better AR effect
         ctx.drawImage(
           video,
           minX,
@@ -67,23 +80,27 @@ function AROverlay({
         video.pause();
       }
     }
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+    };
   }, [isTracking, matches, framePoints, targetPoints, videoUrl]);
 
   return (
-    <>
+    <div className="absolute inset-0">
       <canvas
         ref={canvasRef}
-        className="absolute top-0 left-0 w-full h-full pointer-events-none"
+        className="absolute inset-0 w-full h-full"
       />
       <video
         ref={videoRef}
         src={videoUrl}
-        className="hidden" // Hide the video element, we'll draw to canvas
+        className="hidden"
         playsInline
         muted
         loop
       />
-    </>
+    </div>
   );
 }
 
