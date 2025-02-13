@@ -13,6 +13,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isTracking, setIsTracking] = useState(false);
+  const [videoInitialized, setVideoInitialized] = useState(false);
   const lastFramesRef = useRef<number[]>([]); // Store last N frame match counts
   const FRAME_BUFFER_SIZE = 10; // Increased buffer size
   const frameCountRef = useRef(0); // Count frames since last state change
@@ -163,9 +164,9 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
   // Add effect to handle AR video playback
   useEffect(() => {
-    const videoElement = arVideoRef.current; // Store ref value
+    const videoElement = arVideoRef.current;
     
-    if (isTracking && videoElement) {
+    if ((isTracking || videoInitialized) && videoElement) {
       const playVideo = async () => {
         try {
           console.log('Attempting to play AR video...');
@@ -192,6 +193,10 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
           // Try to play
           await videoElement.play();
+          if (!videoInitialized) {
+            setVideoInitialized(true);
+          }
+          
           console.log('Video playing:', { 
             currentTime: videoElement.currentTime,
             duration: videoElement.duration,
@@ -204,17 +209,20 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
       playVideo();
 
-      // Add cleanup to prevent video reset on re-render
+      // Add event listener for video end
+      const handleVideoEnd = () => {
+        setVideoInitialized(false);
+      };
+      videoElement.addEventListener('ended', handleVideoEnd);
+
       return () => {
-        if (videoElement && !videoElement.paused) {
+        videoElement.removeEventListener('ended', handleVideoEnd);
+        if (videoElement && !videoElement.paused && !videoInitialized) {
           console.log('Preserving video playback state');
         }
       };
-    } else if (!isTracking && videoElement) {
-      // Pause but don't reset when tracking is lost
-      videoElement.pause();
     }
-  }, [isTracking]);
+  }, [isTracking, videoInitialized]);
 
   // Add effect to preload video
   useEffect(() => {
@@ -265,7 +273,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         src="/videos/sneakarvid.mp4"
         playsInline
         muted
-        loop
+        loop={false}
         preload="auto"
         style={{
           position: 'absolute',
@@ -275,7 +283,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           height: '50%',
           objectFit: 'contain',
           transform: 'translate(-50%, -50%) translateZ(2px)',
-          opacity: isTracking ? 1 : 0,
+          opacity: isTracking || videoInitialized ? 1 : 0,
           transition: 'opacity 0.3s ease',
           pointerEvents: 'none',
           backgroundColor: 'transparent',
@@ -288,17 +296,9 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
             height: e.currentTarget.videoHeight
           });
         }}
-        onCanPlay={() => {
-          console.log('AR video can play');
-        }}
-        onPlaying={() => {
-          console.log('AR video started playing');
-        }}
-        onPause={() => {
-          console.log('AR video paused');
-        }}
-        onError={(e) => {
-          console.error('AR video error:', e);
+        onEnded={() => {
+          setVideoInitialized(false);
+          console.log('Video playback completed');
         }}
       />
     </div>
