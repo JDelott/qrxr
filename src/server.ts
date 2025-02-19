@@ -66,12 +66,11 @@ const pool = new Pool({
   user: 'postgres',
   host: 'localhost',
   database: 'ar_tracking',
-  password: 'password123',  // Use direct string
-  port: 5432,
-  ssl: false
+  password: 'password123',
+  port: 5432
 });
 
-// Add error handler for the pool
+// Add error logging
 pool.on('error', (err) => {
   console.error('Unexpected database error:', err);
 });
