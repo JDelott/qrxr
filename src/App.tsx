@@ -35,8 +35,8 @@ function App() {
       const formData = new FormData();
       formData.append('image', file);
 
-      // Send to server
-      const response = await fetch('http://localhost:3000/api/upload', {
+      // Send to server using relative URL
+      const response = await fetch('/api/upload', {
         method: 'POST',
         body: formData
       });
