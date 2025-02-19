@@ -47,12 +47,20 @@ const upload = multer({
   }
 });
 
-// Configure PostgreSQL connection
+// Add some debugging
+console.log('PostgreSQL Config:', {
+  user: process.env.POSTGRES_USER,
+  host: process.env.POSTGRES_HOST,
+  database: process.env.POSTGRES_DB,
+  hasPassword: !!process.env.POSTGRES_PASSWORD,
+  port: process.env.POSTGRES_PORT
+});
+
 const pool = new Pool({
-  user: process.env.POSTGRES_USER || 'postgres',
-  host: process.env.POSTGRES_HOST || 'localhost',
-  database: process.env.POSTGRES_DB || 'ar_tracking',
-  password: String(process.env.POSTGRES_PASSWORD), // Force string type
+  user: process.env.POSTGRES_USER,
+  host: process.env.POSTGRES_HOST,
+  database: process.env.POSTGRES_DB,
+  password: process.env.POSTGRES_PASSWORD || '',  // Try with empty string fallback
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
 });
 
