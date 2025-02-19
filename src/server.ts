@@ -61,13 +61,19 @@ if (!process.env.POSTGRES_PASSWORD) {
   console.error('No PostgreSQL password found in environment!');
 }
 
+// Create the pool with explicit string conversion for password
 const pool = new Pool({
-  user: process.env.POSTGRES_USER || 'postgres',
-  host: process.env.POSTGRES_HOST || 'localhost',
-  database: process.env.POSTGRES_DB || 'ar_tracking',
-  password: 'password123',  // Use known working password
+  user: 'postgres',
+  host: 'localhost',
+  database: 'ar_tracking',
+  password: 'password123',  // Use direct string
   port: 5432,
   ssl: false
+});
+
+// Add error handler for the pool
+pool.on('error', (err) => {
+  console.error('Unexpected database error:', err);
 });
 
 // Log pool config (without password)
