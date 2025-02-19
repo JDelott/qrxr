@@ -1,12 +1,12 @@
-import pkg from 'pg';
-const { Pool } = pkg;
-import express from 'express';
-import multer from 'multer';
-import cors from 'cors';
+import * as pg from 'pg';
+const { Pool } = pg;
+import * as express from 'express';
+import * as multer from 'multer';
+import * as cors from 'cors';
 import sharp from 'sharp';
 import { S3Client, PutObjectCommand, ListObjectsCommand } from '@aws-sdk/client-s3';
 import { config } from 'dotenv';
-import path from 'path';
+import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 // Load environment variables
