@@ -1,12 +1,12 @@
-import * as pg from 'pg';
-const { Pool } = pg;
-import * as express from 'express';
-import * as multer from 'multer';
-import * as cors from 'cors';
+import express, { Request, Response } from 'express';
+import multer from 'multer';
+import cors from 'cors';
 import sharp from 'sharp';
+import pg from 'pg';
+const { Pool } = pg;
 import { S3Client, PutObjectCommand, ListObjectsCommand } from '@aws-sdk/client-s3';
 import { config } from 'dotenv';
-import * as path from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
 
 // Load environment variables
@@ -21,7 +21,7 @@ console.log('Spaces Configuration:', {
 });
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 // Enable CORS and JSON parsing
 app.use(cors());
@@ -47,11 +47,11 @@ const upload = multer({
 
 // Configure PostgreSQL connection
 const pool = new Pool({
-  user: 'jacobdelott',
-  host: 'localhost',
-  database: 'ar_tracking',
-  password: '',  // Leave empty if no password was set
-  port: 5432,
+  user: process.env.POSTGRES_USER || 'postgres',
+  host: process.env.POSTGRES_HOST || 'localhost',
+  database: process.env.POSTGRES_DB || 'ar_tracking',
+  password: process.env.POSTGRES_PASSWORD || '',
+  port: parseInt(process.env.POSTGRES_PORT || '5432'),
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -158,7 +158,7 @@ async function testSpacesConnection() {
   }
 }
 
-app.post('/api/upload', upload.single('image'), async (req: express.Request, res: express.Response): Promise<void> => {
+app.post('/api/upload', upload.single('image'), async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.file) {
       console.error('No file in request');
@@ -228,13 +228,13 @@ app.post('/api/upload', upload.single('image'), async (req: express.Request, res
   }
 });
 
-app.get('/api/test-spaces', async (_req, res) => {
+app.get('/api/test-spaces', async (_req: Request, res: Response) => {
   const isConnected = await testSpacesConnection();
   res.json({ success: isConnected });
 });
 
 // Add this new endpoint
-app.get('/api/check-env', (_req, res) => {
+app.get('/api/check-env', (_req: Request, res: Response) => {
   const envCheck = {
     // Server-side vars (no VITE prefix)
     SPACE_REGION: process.env.SPACE_REGION,
@@ -260,7 +260,7 @@ app.get('/api/check-env', (_req, res) => {
 app.use(express.static(path.join(__dirname, '../dist')));
 
 // Handle React routing, return all requests to React app
-app.get('*', (_req, res) => {
+app.get('*', (_req: Request, res: Response) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
