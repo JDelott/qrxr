@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "CommonJS",
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "outDir": "./dist",
     "rootDir": "./src",
@@ -11,8 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false,
-    "noEmit": false,
-    "types": ["node"]
+    "noEmit": false
   },
   "include": ["src/server.ts"],
   "exclude": ["node_modules"]
