@@ -56,12 +56,26 @@ console.log('PostgreSQL Config:', {
   port: process.env.POSTGRES_PORT
 });
 
+// Add this before creating the pool
+if (!process.env.POSTGRES_PASSWORD) {
+  console.error('No PostgreSQL password found in environment!');
+}
+
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'ar_tracking',
-  password: 'password123',  // Hardcode temporarily to test
-  port: 5432
+  user: process.env.POSTGRES_USER || 'postgres',
+  host: process.env.POSTGRES_HOST || 'localhost',
+  database: process.env.POSTGRES_DB || 'ar_tracking',
+  password: 'password123',  // Use known working password
+  port: 5432,
+  ssl: false
+});
+
+// Log pool config (without password)
+console.log('Pool config:', {
+  user: pool.options.user,
+  host: pool.options.host,
+  database: pool.options.database,
+  port: pool.options.port
 });
 
 async function uploadToSpaces(buffer: Buffer, originalname: string, mimetype: string): Promise<string> {
