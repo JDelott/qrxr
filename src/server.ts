@@ -7,10 +7,12 @@ const { Pool } = pg;
 import { S3Client, PutObjectCommand, ListObjectsCommand } from '@aws-sdk/client-s3';
 import { config } from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 // Load environment variables
 config();
+
+// Just use process.cwd() directly
+const rootDir = process.cwd();
 
 // After config() call, add this logging
 console.log('Spaces Configuration:', {
@@ -53,9 +55,6 @@ const pool = new Pool({
   password: process.env.POSTGRES_PASSWORD || '',
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
 });
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function uploadToSpaces(buffer: Buffer, originalname: string, mimetype: string): Promise<string> {
   try {
@@ -200,7 +199,7 @@ app.post('/api/upload', upload.single('image'), async (req: Request, res: Respon
       
       const values = [
         req.file.originalname,
-        imageUrl, // Store the Spaces URL instead of local path
+        imageUrl,
         new Date(),
         true,
         JSON.stringify(trackingData)
@@ -233,7 +232,6 @@ app.get('/api/test-spaces', async (_req: Request, res: Response) => {
   res.json({ success: isConnected });
 });
 
-// Add this new endpoint
 app.get('/api/check-env', (_req: Request, res: Response) => {
   const envCheck = {
     // Server-side vars (no VITE prefix)
@@ -257,14 +255,14 @@ app.get('/api/check-env', (_req: Request, res: Response) => {
 });
 
 // Serve static files from the React app
-app.use(express.static(path.join(__dirname, '../dist')));
+app.use(express.static(path.join(rootDir, 'dist')));
 
 // Handle React routing, return all requests to React app
 app.get('*', (_req: Request, res: Response) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
+  res.sendFile(path.join(rootDir, 'dist/index.html'));
 });
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
+  console.log(`Server is running on port ${port}`);
 });
