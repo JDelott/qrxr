@@ -57,11 +57,11 @@ console.log('PostgreSQL Config:', {
 });
 
 const pool = new Pool({
-  user: process.env.POSTGRES_USER,
-  host: process.env.POSTGRES_HOST,
-  database: process.env.POSTGRES_DB,
-  password: process.env.POSTGRES_PASSWORD || '',  // Try with empty string fallback
-  port: parseInt(process.env.POSTGRES_PORT || '5432'),
+  user: 'postgres',
+  host: 'localhost',
+  database: 'ar_tracking',
+  password: 'password123',  // Hardcode temporarily to test
+  port: 5432
 });
 
 async function uploadToSpaces(buffer: Buffer, originalname: string, mimetype: string): Promise<string> {
