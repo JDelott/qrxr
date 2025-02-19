@@ -6,6 +6,8 @@ import cors from 'cors';
 import sharp from 'sharp';
 import { S3Client, PutObjectCommand, ListObjectsCommand } from '@aws-sdk/client-s3';
 import { config } from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Load environment variables
 config();
@@ -51,6 +53,9 @@ const pool = new Pool({
   password: '',  // Leave empty if no password was set
   port: 5432,
 });
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function uploadToSpaces(buffer: Buffer, originalname: string, mimetype: string): Promise<string> {
   try {
@@ -226,6 +231,37 @@ app.post('/api/upload', upload.single('image'), async (req: express.Request, res
 app.get('/api/test-spaces', async (_req, res) => {
   const isConnected = await testSpacesConnection();
   res.json({ success: isConnected });
+});
+
+// Add this new endpoint
+app.get('/api/check-env', (_req, res) => {
+  const envCheck = {
+    // Server-side vars (no VITE prefix)
+    SPACE_REGION: process.env.SPACE_REGION,
+    SPACE_NAME: process.env.SPACE_NAME,
+    HAS_SPACES_KEY: !!process.env.SPACES_KEY,
+    HAS_SPACES_SECRET: !!process.env.SPACES_SECRET,
+    
+    // Client-side vars (VITE prefix)
+    VITE_SPACE_REGION: process.env.VITE_SPACE_REGION,
+    VITE_SPACE_NAME: process.env.VITE_SPACE_NAME,
+    HAS_VITE_SPACES_KEY: !!process.env.VITE_SPACES_KEY,
+    HAS_VITE_SPACES_SECRET: !!process.env.VITE_SPACES_SECRET,
+    
+    // Show which endpoint is being used
+    CURRENT_ENDPOINT: `https://${process.env.SPACE_REGION}.digitaloceanspaces.com`
+  };
+
+  console.log('Current Environment Configuration:', envCheck);
+  res.json(envCheck);
+});
+
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// Handle React routing, return all requests to React app
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 // Start the server

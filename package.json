@@ -9,7 +9,9 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run server\"",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "NODE_ENV=production node dist/server.js",
+    "deploy": "npm run build && npm run start"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.744.0",
