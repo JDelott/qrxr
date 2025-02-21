@@ -39,6 +39,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
       try {
         // Process frame to get points
         const framePoints = await frameProcessor.processFrame(currentVideo);
+        console.log('Frame points detected:', framePoints.length);
         
         if (framePoints.length > 0) {
           // Calculate bounding box of points

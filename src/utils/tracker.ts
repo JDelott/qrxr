@@ -6,6 +6,13 @@ export class ImageTracker {
   private targetHeight: number;
 
   constructor(trackingData: { points: { pt: { x: number, y: number } }[], width: number, height: number }) {
+    if (!trackingData || !trackingData.points) {
+      this.targetPoints = [];
+      this.targetWidth = 0;
+      this.targetHeight = 0;
+      return;
+    }
+
     this.targetPoints = trackingData.points.map((p) => ({
       x: p.pt.x,
       y: p.pt.y
