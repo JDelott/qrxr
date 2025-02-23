@@ -17,11 +17,11 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const lastFramesRef = useRef<number[]>([]); // Store last N frame match counts
   const FRAME_BUFFER_SIZE = 10; // Increased buffer size
   const frameCountRef = useRef(0); // Count frames since last state change
-  const MIN_FRAMES_BEFORE_CHANGE = 5; // Minimum frames before allowing state change
+  const MIN_FRAMES_BEFORE_CHANGE = 3; // Stable tracking detection
   
-  // Add constants for tracking thresholds
-  const START_TRACKING_THRESHOLD = 40;
-  const STOP_TRACKING_THRESHOLD = 20;
+  // Balanced thresholds that require tracking but aren't too strict
+  const START_TRACKING_THRESHOLD = 20; // Requires good initial detection
+  const STOP_TRACKING_THRESHOLD = 15; // Maintains tracking requirement
 
   // Add ref for AR video
   const arVideoRef = useRef<HTMLVideoElement>(null);

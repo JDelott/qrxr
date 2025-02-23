@@ -16,18 +16,25 @@ export class ImageTracker {
 
   public matchFeatures(framePoints: Point[], frameWidth: number, frameHeight: number): FeatureMatch[] {
     const matches: FeatureMatch[] = [];
-    const maxDistance = 15; // Original strict threshold
-    const minMatchRatio = 0.15; // Original ratio - require 15% of points to match
+    const maxDistance = 22; // Balanced distance threshold
+    const minMatchRatio = 0.12; // Require 12% of points to match
 
     // Calculate scale factors
     const scaleX = frameWidth / this.targetWidth;
     const scaleY = frameHeight / this.targetHeight;
+    const avgScale = (scaleX + scaleY) / 2;
+    const scaleThreshold = 0.35; // Balanced scale difference requirement
+
+    // Skip if scales are too different
+    if (Math.abs(scaleX - scaleY) > avgScale * scaleThreshold) {
+      return [];
+    }
 
     // Track matched points to prevent duplicates
     const usedFramePoints = new Set<number>();
     const usedTargetPoints = new Set<number>();
 
-    // First pass: Find best matches with strict distance threshold
+    // Find best matches
     framePoints.forEach((framePoint, queryIdx) => {
       let bestMatch = {
         trainIdx: -1,
@@ -62,9 +69,9 @@ export class ImageTracker {
       }
     });
 
-    // Only return matches if we have enough of them
+    // Require minimum matches
     const minMatches = Math.max(
-      3, // Original minimum of 3 matches required
+      3, // Minimum of 3 matches for stability
       Math.floor(this.targetPoints.length * minMatchRatio)
     );
 

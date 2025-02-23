@@ -44,7 +44,7 @@ function AROverlay({
     // Clear previous frame
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (isTracking && matches.length > 0) {
+    if (isTracking && matches.length >= 3) { // Ensure minimum matches
       // Calculate bounding box of tracked points
       const points = matches.map(m => framePoints[m.queryIdx]);
       const minX = Math.min(...points.map(p => p.x));
@@ -55,8 +55,8 @@ function AROverlay({
       const width = maxX - minX;
       const height = maxY - minY;
 
-      // Start playing video when tracking starts
-      if (video.paused) {
+      // Only play video if we have good tracking
+      if (video.paused && width > 50 && height > 50) { // Minimum size check
         video.play().catch(err => console.error('Video playback failed:', err));
       }
 
