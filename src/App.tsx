@@ -124,84 +124,116 @@ function App() {
     hasPreviewCanvas: !!previewCanvasRef.current
   });
 
-  if (!showCamera) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="bg-white p-8 rounded-lg shadow-md max-w-2xl w-full">
-          <h1 className="text-2xl font-bold mb-4">Image Tracker Setup</h1>
-          <p className="mb-4 text-gray-600">
-            First, take a screenshot of the image you want to track and upload it here:
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            onClick={() => console.log('File input clicked')}
-            className="block w-full text-sm text-gray-500 
-              file:mr-4 file:py-2 file:px-4 
-              file:rounded-full file:border-0 
-              file:text-sm file:font-semibold 
-              file:bg-blue-50 file:text-blue-700 
-              hover:file:bg-blue-100"
-          />
-          
-          {/* Preview canvas */}
-          <canvas 
-            ref={previewCanvasRef}
-            className="mt-4 max-w-full h-auto border border-gray-300"
-          />
-          
-          {trackingData && (
-            <div className="mt-4">
-              <p className="text-sm text-gray-600 mb-2">
-                Found {trackingData.features.length} features in the image.
-              </p>
-              <button
-                onClick={() => {
-                  console.log('Starting camera...');
-                  setShowCamera(true);
-                }}
-                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-              >
-                Start Camera Tracking
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!trackingData) {
-    return <div>Processing image...</div>;
-  }
-
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Camera 
-        trackingData={trackingData}
-        onTrackingUpdate={(isTracking) => {
-          console.log('Tracking status:', isTracking);
-        }}
-        videoUrl="/videos/sneakarvid.mp4"
-      />
-      <button
-        onClick={() => {
-          console.log('Going back...');
-          setShowCamera(false);
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-          }
-          if (previewCanvasRef.current) {
-            const ctx = previewCanvasRef.current.getContext('2d');
-            ctx?.clearRect(0, 0, previewCanvasRef.current.width, previewCanvasRef.current.height);
-          }
-        }}
-        className="absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded"
-      >
-        Back
-      </button>
+    <div className="h-screen bg-zinc-900 text-white overflow-hidden">
+      {!showCamera ? (
+        <div className="h-full max-w-6xl mx-auto px-6 py-6 flex flex-col">
+          {/* Header Section - smaller and fixed height */}
+          <div className="mb-6 text-center flex-shrink-0">
+            <h1 className="text-6xl font-black tracking-tighter mb-2">
+              QR<span className="text-emerald-400">XR</span>
+            </h1>
+            <div className="flex items-center justify-center gap-4">
+              <div className="h-[2px] w-24 bg-emerald-400"></div>
+              <p className="text-zinc-400 text-lg">Augmented Reality QR Generator</p>
+              <div className="h-[2px] w-24 bg-emerald-400"></div>
+            </div>
+          </div>
+
+          {/* Main Content Grid - with flex and overflow handling */}
+          <div className="flex-1 min-h-0 grid grid-rows-[auto_1fr_auto] gap-4">
+            {/* Upload Section - fixed height */}
+            <div className="border border-zinc-700 bg-zinc-800/50 backdrop-blur p-6 rounded-xl">
+              <h2 className="text-xl font-bold mb-3 flex items-center gap-4">
+                <span className="text-emerald-400">01</span>
+                Upload Reference Image
+              </h2>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="w-full border-2 border-zinc-700 p-3 rounded-lg
+                  file:mr-4 file:py-2 file:px-4
+                  file:rounded-full file:border-0
+                  file:text-sm file:font-bold
+                  file:bg-emerald-400 file:text-black
+                  hover:file:bg-emerald-300
+                  cursor-pointer bg-zinc-800"
+              />
+            </div>
+
+            {/* Preview Section - flexible height with overflow */}
+            <div className="border border-zinc-700 bg-zinc-800/50 backdrop-blur p-6 rounded-xl overflow-hidden">
+              <h2 className="text-xl font-bold mb-3 flex items-center gap-4">
+                <span className="text-emerald-400">02</span>
+                Preview
+              </h2>
+              <div className="relative h-[calc(100%-3rem)]">
+                <canvas 
+                  ref={previewCanvasRef}
+                  className="w-full h-full object-contain rounded-lg border border-zinc-700"
+                />
+                <div className="absolute inset-0 grid grid-cols-6 pointer-events-none opacity-10">
+                  {[...Array(6)].map((_, i) => (
+                    <div key={i} className="border-l border-emerald-400 last:border-r h-full" />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Features Section - fixed height */}
+            {trackingData && (
+              <div className="border border-zinc-700 bg-zinc-800/50 backdrop-blur p-6 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold mb-1 flex items-center gap-4">
+                      <span className="text-emerald-400">03</span>
+                      Features Detected
+                    </h2>
+                    <div className="text-3xl font-black text-emerald-400">
+                      {trackingData.features.length}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowCamera(true)}
+                    className="bg-emerald-400 text-black px-6 py-3 rounded-xl
+                      font-bold text-base hover:bg-emerald-300
+                      transition-all duration-200 hover:scale-105"
+                  >
+                    Start AR Tracking →
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="relative h-screen">
+          <Camera 
+            trackingData={trackingData!}
+            onTrackingUpdate={(isTracking) => {
+              console.log('Tracking status:', isTracking);
+            }}
+            videoUrl="/videos/sneakarvid.mp4"
+          />
+          <button
+            onClick={() => {
+              setShowCamera(false);
+              if (fileInputRef.current) fileInputRef.current.value = '';
+              if (previewCanvasRef.current) {
+                const ctx = previewCanvasRef.current.getContext('2d');
+                ctx?.clearRect(0, 0, previewCanvasRef.current.width, previewCanvasRef.current.height);
+              }
+            }}
+            className="absolute top-6 right-6 bg-emerald-400 text-black 
+              px-6 py-3 rounded-xl font-bold hover:bg-emerald-300
+              transition-all duration-200 hover:scale-105"
+          >
+            ← Back
+          </button>
+        </div>
+      )}
     </div>
   );
 }

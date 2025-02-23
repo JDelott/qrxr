@@ -1,8 +1,22 @@
+/* Remove default styles that might cause spacing */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Ensure full viewport coverage */
 #root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  min-height: 100vh;
+  width: 100%;
+}
+
+/* Remove any default margins from the container */
+.container {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 
 .logo {
@@ -12,7 +26,7 @@
   transition: filter 300ms;
 }
 .logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+  filter: drop-shadow(0 0 2em #111111);
 }
 .logo.react:hover {
   filter: drop-shadow(0 0 2em #61dafbaa);

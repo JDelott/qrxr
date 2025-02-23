@@ -8,15 +8,21 @@ export default defineConfig({
     outDir: 'dist', // This is where the built files will go
   },
   server: {
-    host: true,
     port: 5174,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-        secure: false,
-        ws: true,
-      },
+    host: true,
+    hmr: true,
+    watch: {
+      usePolling: true,
+      interval: 1, // Ultra-aggressive polling
     },
   },
+  optimizeDeps: {
+    force: true,
+    esbuildOptions: {
+      target: 'esnext'
+    }
+  },
+  esbuild: {
+    target: 'esnext'
+  }
 })
