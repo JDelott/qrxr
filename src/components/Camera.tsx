@@ -13,25 +13,47 @@ interface CameraProps {
 
 function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isTracking, setIsTracking] = useState(false);
-  const [videoInitialized, setVideoInitialized] = useState(false);
-  const lastFramesRef = useRef<number[]>([]); // Store last N frame match counts
-  const FRAME_BUFFER_SIZE = 10; // Increased buffer size
-  const frameCountRef = useRef(0); // Count frames since last state change
-  const MIN_FRAMES_BEFORE_CHANGE = 3; // Stable tracking detection
-  
-  // Balanced thresholds that require tracking but aren't too strict
-  const START_TRACKING_THRESHOLD = 20; // Requires good initial detection
-  const STOP_TRACKING_THRESHOLD = 15; // Maintains tracking requirement
-
-  // Add ref for AR video
+  const hasInitialized = useRef(false);
   const arVideoRef = useRef<HTMLVideoElement>(null);
+
+  // Handle back button and cleanup
+  useEffect(() => {
+    const handleBackButton = () => {
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+      }
+      if (arVideoRef.current) {
+        arVideoRef.current.pause();
+      }
+      setIsTracking(false);
+      onTrackingUpdate(false);
+    };
+
+    window.addEventListener('popstate', handleBackButton);
+
+    return () => {
+      window.removeEventListener('popstate', handleBackButton);
+      // Cleanup camera and video on unmount
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+      }
+      if (arVideoRef.current) {
+        arVideoRef.current.pause();
+      }
+    };
+  }, [onTrackingUpdate]);
 
   useEffect(() => {
     const currentVideo = videoRef.current;
-    const currentCanvas = canvasRef.current;
-    if (!currentVideo || !currentCanvas || !trackingData) return;
+    if (!currentVideo || !trackingData) {
+      console.log('Missing video or tracking data:', { video: !!currentVideo, trackingData: !!trackingData });
+      return;
+    }
+
+    console.log('Initializing tracking with data:', trackingData);
 
     const frameProcessor = new FrameProcessor();
     const tracker = new ImageTracker(trackingData);
@@ -39,136 +61,78 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
     const processFrame = async () => {
       try {
-        // Process frame to get points
+        if (!currentVideo.videoWidth || !currentVideo.videoHeight) {
+          console.log('Video not ready:', {
+            width: currentVideo.videoWidth,
+            height: currentVideo.videoHeight
+          });
+          animationFrame = requestAnimationFrame(processFrame);
+          return;
+        }
+
         const framePoints = await frameProcessor.processFrame(currentVideo);
-        
-        if (framePoints.length > 0) {
-          // Calculate bounding box of points
-          const minX = Math.min(...framePoints.map(p => p.x));
-          const maxX = Math.max(...framePoints.map(p => p.x));
-          const minY = Math.min(...framePoints.map(p => p.y));
-          const maxY = Math.max(...framePoints.map(p => p.y));
-          
-          const width = maxX - minX;
-          const height = maxY - minY;
-          
-          // Match features
-          const matches = tracker.matchFeatures(
-            framePoints,
-            width,
-            height
-          );
+        console.log('Frame points found:', framePoints.length);
 
-          // Update frame buffer
-          lastFramesRef.current.push(matches.length);
-          if (lastFramesRef.current.length > FRAME_BUFFER_SIZE) {
-            lastFramesRef.current.shift();
-          }
+        const matches = tracker.matchFeatures(
+          framePoints,
+          currentVideo.videoWidth,
+          currentVideo.videoHeight
+        );
 
-          // Calculate average matches
-          const averageMatches = Math.round(
-            lastFramesRef.current.reduce((a, b) => a + b, 0) / lastFramesRef.current.length
-          );
+        console.log('Current matches:', matches.length);
 
-          // Increment frame counter
-          frameCountRef.current++;
-
-          // Update tracking status with debounce
-          const shouldBeTracking = isTracking 
-            ? averageMatches >= STOP_TRACKING_THRESHOLD
-            : averageMatches >= START_TRACKING_THRESHOLD;
-
-          if (shouldBeTracking !== isTracking && frameCountRef.current >= MIN_FRAMES_BEFORE_CHANGE) {
-            console.log('State change:', {
-              averageMatches,
-              threshold: isTracking ? STOP_TRACKING_THRESHOLD : START_TRACKING_THRESHOLD,
-              frameCount: frameCountRef.current
-            });
-            setIsTracking(shouldBeTracking);
-            onTrackingUpdate?.(shouldBeTracking);
-            frameCountRef.current = 0; // Reset frame counter
-          }
-
-          // Draw debug visualization
-          const ctx = currentCanvas.getContext('2d');
-          if (ctx) {
-            currentCanvas.width = currentVideo.videoWidth;
-            currentCanvas.height = currentVideo.videoHeight;
-            
-            // Draw all points in blue
-            ctx.fillStyle = 'rgba(0, 0, 255, 0.3)';
-            framePoints.forEach(point => {
-              ctx.beginPath();
-              ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
-              ctx.fill();
-            });
-
-            // Draw matches in bright green
-            ctx.strokeStyle = 'rgba(0, 255, 0, 1)';
-            ctx.lineWidth = 3;
-            matches.forEach(match => {
-              const framePoint = framePoints[match.queryIdx];
-              ctx.beginPath();
-              ctx.arc(framePoint.x, framePoint.y, 8, 0, Math.PI * 2);
-              ctx.stroke();
-            });
-
-            // Draw bounding box
-            ctx.strokeStyle = 'yellow';
-            ctx.strokeRect(minX, minY, width, height);
-
-            // Draw tracking status and debug info
-            ctx.fillStyle = 'white';
-            ctx.font = '24px Arial';
-            ctx.fillText(`Tracking: ${isTracking ? 'YES' : 'NO'}`, 10, 30);
-            ctx.fillText(`Matches: ${averageMatches}/${isTracking ? STOP_TRACKING_THRESHOLD : START_TRACKING_THRESHOLD}`, 10, 60);
-            ctx.fillText(`Frame Buffer: ${lastFramesRef.current.length}/${FRAME_BUFFER_SIZE}`, 10, 90);
-            ctx.fillText(`Frames Since Change: ${frameCountRef.current}/${MIN_FRAMES_BEFORE_CHANGE}`, 10, 120);
-          }
+        if (!hasInitialized.current && matches.length >= 1) {
+          console.log('Target detected! Starting tracking...');
+          setIsTracking(true);
+          onTrackingUpdate(true);
+          hasInitialized.current = true;
         }
 
         animationFrame = requestAnimationFrame(processFrame);
       } catch (error) {
-        console.error('Error in processFrame:', error);
+        console.error('Frame processing error:', error);
         animationFrame = requestAnimationFrame(processFrame);
       }
     };
 
-    const setupCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        });
-        
-        currentVideo.srcObject = stream;
-        currentVideo.onloadedmetadata = () => {
-          processFrame();
-        };
-      } catch (error) {
-        console.error('Error setting up camera:', error);
+    navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
       }
-    };
-
-    setupCamera();
+    }).then((stream) => {
+      currentVideo.srcObject = stream;
+      console.log('Camera initialized:', stream.getVideoTracks()[0].getSettings());
+      
+      currentVideo.onloadedmetadata = () => {
+        console.log('Video metadata loaded:', {
+          width: currentVideo.videoWidth,
+          height: currentVideo.videoHeight
+        });
+        currentVideo.play().catch(console.error);
+        processFrame();
+      };
+    }).catch((error) => {
+      console.error('Camera initialization failed:', error);
+    });
 
     return () => {
-      cancelAnimationFrame(animationFrame);
-      if (currentVideo?.srcObject) {
-        const tracks = (currentVideo.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+      if (currentVideo.srcObject) {
+        (currentVideo.srcObject as MediaStream).getTracks().forEach(track => track.stop());
       }
     };
-  }, [trackingData, onTrackingUpdate, isTracking]);
+  }, [trackingData, onTrackingUpdate]);
 
   // Add effect to handle AR video playback
   useEffect(() => {
     const videoElement = arVideoRef.current;
     
-    if ((isTracking || videoInitialized) && videoElement) {
+    if ((isTracking || hasInitialized.current) && videoElement) {
       const playVideo = async () => {
         try {
           console.log('Attempting to play AR video...');
@@ -195,8 +159,8 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
           // Try to play
           await videoElement.play();
-          if (!videoInitialized) {
-            setVideoInitialized(true);
+          if (!hasInitialized.current) {
+            hasInitialized.current = true;
           }
           
           console.log('Video playing:', { 
@@ -213,18 +177,18 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
       // Add event listener for video end
       const handleVideoEnd = () => {
-        setVideoInitialized(false);
+        hasInitialized.current = false;
       };
       videoElement.addEventListener('ended', handleVideoEnd);
 
       return () => {
         videoElement.removeEventListener('ended', handleVideoEnd);
-        if (videoElement && !videoElement.paused && !videoInitialized) {
+        if (videoElement && !videoElement.paused && !hasInitialized.current) {
           console.log('Preserving video playback state');
         }
       };
     }
-  }, [isTracking, videoInitialized]);
+  }, [isTracking, hasInitialized.current]);
 
   // Add effect to preload video
   useEffect(() => {
@@ -235,8 +199,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   }, [videoUrl]);
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
-      {/* Camera Layer */}
+    <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
       <video 
         ref={videoRef}
         autoPlay 
@@ -249,67 +212,51 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          transform: 'translateZ(0)'
+          zIndex: 0
         }}
       />
 
-      {/* Debug Layer - Hidden but still functional */}
-      <canvas 
-        ref={canvasRef}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          pointerEvents: 'none',
-          transform: 'translateZ(1px)',
-          display: 'none'
-        }}
-      />
-
-      {/* 3D Scene Layer */}
-      {isTracking && (
-        <div style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          pointerEvents: 'none',
-        }}>
-          <Canvas
-            camera={{
-              position: [0, 0, 5],
-              fov: 45,
-              near: 0.1,
-              far: 1000
-            }}
-            gl={{ 
-              antialias: true,
-              alpha: true,
-            }}
-          >
-            <ARVideoPlane
-              videoUrl={videoUrl}
-              isVisible={isTracking}
-              videoRef={arVideoRef}
-            />
-          </Canvas>
-        </div>
-      )}
-
-      {/* AR Video Layer */}
       <video
         ref={arVideoRef}
         src="/videos/sneakarvid.mp4"
         playsInline
         muted
+        preload="auto"
         style={{ display: 'none' }}
-        onLoadedData={() => console.log('Video loaded')}
-        onPlay={() => console.log('Video started playing')}
-        onError={(e) => console.error('Video error:', e)}
       />
+
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '125vw',
+        height: '125vh',
+        transform: 'translate(-12.5%, -12.5%)',
+        pointerEvents: 'none',
+        zIndex: 1
+      }}>
+        <Canvas
+          camera={{
+            position: [0, 0, 3],
+            fov: 90,
+            near: 0.1,
+            far: 1000
+          }}
+          gl={{ 
+            antialias: true,
+            alpha: true,
+          }}
+          style={{
+            width: '100%',
+            height: '100%'
+          }}
+        >
+          <ARVideoPlane
+            isVisible={isTracking}
+            videoRef={arVideoRef}
+          />
+        </Canvas>
+      </div>
     </div>
   );
 }

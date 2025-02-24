@@ -12,21 +12,39 @@ export class ImageTracker {
     }));
     this.targetWidth = trackingData.width;
     this.targetHeight = trackingData.height;
+    console.log('ImageTracker initialized with:', {
+      points: this.targetPoints.length,
+      width: this.targetWidth,
+      height: this.targetHeight
+    });
   }
 
   public matchFeatures(framePoints: Point[], frameWidth: number, frameHeight: number): FeatureMatch[] {
     const matches: FeatureMatch[] = [];
-    const maxDistance = 23; // More balanced distance threshold
-    const minMatchRatio = 0.13; // Balanced ratio requirement (13%)
+    const maxDistance = 100; // Much more lenient distance threshold
+    const minMatchRatio = 0.02; // Only require 2% of points to match
+
+    // Log incoming frame data
+    console.log('Processing frame:', {
+      framePoints: framePoints.length,
+      frameWidth,
+      frameHeight
+    });
 
     // Calculate scale factors
     const scaleX = frameWidth / this.targetWidth;
     const scaleY = frameHeight / this.targetHeight;
     const avgScale = (scaleX + scaleY) / 2;
-    const scaleThreshold = 0.35; // More balanced scale threshold
+    const scaleThreshold = 1.0; // Allow any reasonable scale
 
     // Skip if scales are too different
     if (Math.abs(scaleX - scaleY) > avgScale * scaleThreshold) {
+      console.log('Scale difference:', {
+        scaleX,
+        scaleY,
+        avgScale,
+        threshold: avgScale * scaleThreshold
+      });
       return [];
     }
 
@@ -71,11 +89,23 @@ export class ImageTracker {
 
     // Require minimum matches
     const minMatches = Math.max(
-      3, // Back to 3 minimum matches
+      1, // Only require a single match to start
       Math.floor(this.targetPoints.length * minMatchRatio)
     );
 
-    return matches.length >= minMatches ? matches : [];
+    const hasEnoughMatches = matches.length >= minMatches;
+    
+    // Detailed matching results
+    console.log('Matching details:', {
+      totalFramePoints: framePoints.length,
+      totalTargetPoints: this.targetPoints.length,
+      matchesFound: matches.length,
+      minMatchesRequired: minMatches,
+      success: hasEnoughMatches,
+      distances: matches.map(m => m.distance)
+    });
+
+    return hasEnoughMatches ? matches : [];
   }
 
   private getDistance(p1: Point, p2: Point): number {
