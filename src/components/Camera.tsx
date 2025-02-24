@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { TrackingData } from '../types/tracking';
 import { FrameProcessor } from '../utils/frameProcessor';
 import { ImageTracker } from '../utils/tracker';
+import { Canvas } from '@react-three/fiber';
+import ARVideoPlane from './ARVideoPlane';
 
 interface CameraProps {
   trackingData: TrackingData;
@@ -262,44 +264,51 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           height: '100%',
           pointerEvents: 'none',
           transform: 'translateZ(1px)',
-          display: 'none' // Hide the canvas
+          display: 'none'
         }}
       />
+
+      {/* 3D Scene Layer */}
+      {isTracking && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'none',
+        }}>
+          <Canvas
+            camera={{
+              position: [0, 0, 5],
+              fov: 45,
+              near: 0.1,
+              far: 1000
+            }}
+            gl={{ 
+              antialias: true,
+              alpha: true,
+            }}
+          >
+            <ARVideoPlane
+              videoUrl={videoUrl}
+              isVisible={isTracking}
+              videoRef={arVideoRef}
+            />
+          </Canvas>
+        </div>
+      )}
 
       {/* AR Video Layer */}
       <video
         ref={arVideoRef}
-        key="ar-video"
         src="/videos/sneakarvid.mp4"
         playsInline
         muted
-        loop={false}
-        preload="auto"
-        style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          width: '50%',
-          height: '50%',
-          objectFit: 'contain',
-          transform: 'translate(-50%, -50%) translateZ(2px)',
-          opacity: isTracking || videoInitialized ? 1 : 0,
-          transition: 'opacity 0.3s ease',
-          pointerEvents: 'none',
-          backgroundColor: 'transparent',
-          mixBlendMode: 'normal'
-        }}
-        onLoadedMetadata={(e) => {
-          console.log('AR video metadata loaded:', {
-            duration: e.currentTarget.duration,
-            width: e.currentTarget.videoWidth,
-            height: e.currentTarget.videoHeight
-          });
-        }}
-        onEnded={() => {
-          setVideoInitialized(false);
-          console.log('Video playback completed');
-        }}
+        style={{ display: 'none' }}
+        onLoadedData={() => console.log('Video loaded')}
+        onPlay={() => console.log('Video started playing')}
+        onError={(e) => console.error('Video error:', e)}
       />
     </div>
   );
