@@ -15,7 +15,10 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isTracking, setIsTracking] = useState(false);
   const hasInitialized = useRef(false);
-  const arVideoRef = useRef<HTMLVideoElement>(null);
+  // Create refs for all three AR videos
+  const arVideoRef1 = useRef<HTMLVideoElement>(null);
+  const arVideoRef2 = useRef<HTMLVideoElement>(null);
+  const arVideoRef3 = useRef<HTMLVideoElement>(null);
 
   // Handle back button and cleanup
   useEffect(() => {
@@ -24,9 +27,10 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
       }
-      if (arVideoRef.current) {
-        arVideoRef.current.pause();
-      }
+      // Pause all videos
+      [arVideoRef1.current, arVideoRef2.current, arVideoRef3.current].forEach(video => {
+        if (video) video.pause();
+      });
       setIsTracking(false);
       onTrackingUpdate(false);
     };
@@ -35,14 +39,15 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
 
     return () => {
       window.removeEventListener('popstate', handleBackButton);
-      // Cleanup camera and video on unmount
+      // Cleanup camera and videos on unmount
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
       }
-      if (arVideoRef.current) {
-        arVideoRef.current.pause();
-      }
+      // Pause all videos
+      [arVideoRef1.current, arVideoRef2.current, arVideoRef3.current].forEach(video => {
+        if (video) video.pause();
+      });
     };
   }, [onTrackingUpdate]);
 
@@ -71,18 +76,22 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         }
 
         const framePoints = await frameProcessor.processFrame(currentVideo);
-        console.log('Frame points found:', framePoints.length);
+        
+        // Only log occasionally
+        if (Math.random() < 0.05) {
+          console.log('Frame points found:', framePoints.length);
+        }
 
-        const matches = tracker.matchFeatures(
+        // Call matchFeatures but ignore the return value since the tracker handles confidence internally
+        tracker.matchFeatures(
           framePoints,
           currentVideo.videoWidth,
           currentVideo.videoHeight
         );
 
-        console.log('Current matches:', matches.length);
-
-        if (!hasInitialized.current && matches.length >= 1) {
-          console.log('Target detected! Starting tracking...');
+        // Check if the tracker has strong tracking (determined inside the tracker)
+        if (!hasInitialized.current && tracker.hasStrongTracking()) {
+          console.log('Strong tracking confirmed! Starting AR experience...');
           setIsTracking(true);
           onTrackingUpdate(true);
           hasInitialized.current = true;
@@ -128,74 +137,78 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
     };
   }, [trackingData, onTrackingUpdate]);
 
-  // Add effect to handle AR video playback
+  // Update effect to handle all AR videos playback
   useEffect(() => {
-    const videoElement = arVideoRef.current;
+    const videoElements = [arVideoRef1.current, arVideoRef2.current, arVideoRef3.current];
     
-    if ((isTracking || hasInitialized.current) && videoElement) {
-      const playVideo = async () => {
+    if ((isTracking || hasInitialized.current) && videoElements.every(v => v !== null)) {
+      const playVideos = async () => {
         try {
-          console.log('Attempting to play AR video...');
-          if (!videoElement) return;
+          console.log('Attempting to play AR videos...');
+          
+          for (const videoElement of videoElements) {
+            if (!videoElement) continue;
 
-          // Don't reset video if it's already playing
-          if (!videoElement.paused) {
-            console.log('Video is already playing, skipping...');
-            return;
-          }
+            // Don't reset video if it's already playing
+            if (!videoElement.paused) {
+              console.log('Video is already playing, skipping...');
+              continue;
+            }
 
-          // Only reset if video has ended or hasn't started
-          if (videoElement.ended || videoElement.currentTime === 0) {
-            videoElement.currentTime = 0;
+            // Only reset if video has ended or hasn't started
+            if (videoElement.ended || videoElement.currentTime === 0) {
+              videoElement.currentTime = 0;
+            }
+            
+            // Ensure video is loaded
+            if (videoElement.readyState < 4) {
+              await new Promise((resolve) => {
+                videoElement.addEventListener('canplaythrough', resolve, { once: true });
+                videoElement.load();
+              });
+            }
+
+            // Try to play
+            await videoElement.play();
           }
           
-          // Ensure video is loaded
-          if (videoElement.readyState < 4) {
-            await new Promise((resolve) => {
-              videoElement.addEventListener('canplaythrough', resolve, { once: true });
-              videoElement.load();
-            });
-          }
-
-          // Try to play
-          await videoElement.play();
           if (!hasInitialized.current) {
             hasInitialized.current = true;
           }
           
-          console.log('Video playing:', { 
-            currentTime: videoElement.currentTime,
-            duration: videoElement.duration,
-            paused: videoElement.paused
-          });
+          console.log('Videos playing successfully');
         } catch (error) {
-          console.error('Failed to play AR video:', error);
+          console.error('Failed to play AR videos:', error);
         }
       };
 
-      playVideo();
+      playVideos();
 
       // Add event listener for video end
       const handleVideoEnd = () => {
         hasInitialized.current = false;
       };
-      videoElement.addEventListener('ended', handleVideoEnd);
+      
+      videoElements.forEach(video => {
+        if (video) video.addEventListener('ended', handleVideoEnd);
+      });
 
       return () => {
-        videoElement.removeEventListener('ended', handleVideoEnd);
-        if (videoElement && !videoElement.paused && !hasInitialized.current) {
-          console.log('Preserving video playback state');
-        }
+        videoElements.forEach(video => {
+          if (video) video.removeEventListener('ended', handleVideoEnd);
+        });
       };
     }
-  }, [isTracking, hasInitialized.current]);
+  }, [isTracking]);
 
-  // Add effect to preload video
+  // Add effect to preload all videos
   useEffect(() => {
-    if (videoUrl && arVideoRef.current) {
-      console.log('Preloading AR video...');
-      arVideoRef.current.load();
-    }
+    [arVideoRef1.current, arVideoRef2.current, arVideoRef3.current].forEach(video => {
+      if (video) {
+        console.log('Preloading AR video...');
+        video.load();
+      }
+    });
   }, [videoUrl]);
 
   return (
@@ -216,9 +229,26 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         }}
       />
 
+      {/* Hidden video elements for the AR content */}
       <video
-        ref={arVideoRef}
-        src="/videos/sneakarvid.mp4"
+        ref={arVideoRef1}
+        src="/videos/Eagle1.mp4"
+        playsInline
+        muted
+        preload="auto"
+        style={{ display: 'none' }}
+      />
+      <video
+        ref={arVideoRef2}
+        src="/videos/Eagle2.mp4"
+        playsInline
+        muted
+        preload="auto"
+        style={{ display: 'none' }}
+      />
+      <video
+        ref={arVideoRef3}
+        src="/videos/Eagle3.mp4"
         playsInline
         muted
         preload="auto"
@@ -251,9 +281,27 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
             height: '100%'
           }}
         >
+          {/* Multiple video planes with different z positions and opacities */}
           <ARVideoPlane
             isVisible={isTracking}
-            videoRef={arVideoRef}
+            videoRef={arVideoRef1}
+            zPosition={-1.0}
+            opacity={0.9}
+            scale={[3.8, 2.15, 1]}
+          />
+          <ARVideoPlane
+            isVisible={isTracking}
+            videoRef={arVideoRef2}
+            zPosition={-2.0}
+            opacity={0.8}
+            scale={[3.8, 2.15, 1]}
+          />
+          <ARVideoPlane
+            isVisible={isTracking}
+            videoRef={arVideoRef3}
+            zPosition={-3.0}
+            opacity={0.7}
+            scale={[3.8, 2.15, 1]}
           />
         </Canvas>
       </div>

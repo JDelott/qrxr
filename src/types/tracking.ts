@@ -21,3 +21,11 @@ export interface FeatureMatch {
   trainIdx: number;
   distance: number;
 }
+
+// Add tracking confidence levels
+export enum TrackingConfidence {
+  None = 0,
+  Low = 1,
+  Medium = 2,
+  High = 3
+}
