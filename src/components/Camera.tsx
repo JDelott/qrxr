@@ -15,13 +15,14 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const [isTracking, setIsTracking] = useState(false);
   const [videoInitialized, setVideoInitialized] = useState(false);
   const lastFramesRef = useRef<number[]>([]); // Store last N frame match counts
-  const FRAME_BUFFER_SIZE = 10; // Increased buffer size
+  const FRAME_BUFFER_SIZE = 5; // Reduced buffer size for faster response
   const frameCountRef = useRef(0); // Count frames since last state change
-  const MIN_FRAMES_BEFORE_CHANGE = 5; // Minimum frames before allowing state change
+  const MIN_FRAMES_BEFORE_CHANGE = 3; // Reduced frames needed before state change
   
-  // Add constants for tracking thresholds
-  const START_TRACKING_THRESHOLD = 40;
-  const STOP_TRACKING_THRESHOLD = 20;
+  // Stricter thresholds to avoid false positives
+  const START_TRACKING_THRESHOLD = 40; // Increased from 25
+  const STOP_TRACKING_THRESHOLD = 20; // Increased from 15
+  const MIN_CONSISTENCY_RATIO = 0.55; // Minimum consistency to start tracking
 
   // Add ref for AR video
   const arVideoRef = useRef<HTMLVideoElement>(null);
@@ -58,6 +59,9 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
             height
           );
 
+          // Get consistency ratio from tracker
+          const consistencyRatio = tracker.getLastConsistencyRatio();
+
           // Update frame buffer
           lastFramesRef.current.push(matches.length);
           if (lastFramesRef.current.length > FRAME_BUFFER_SIZE) {
@@ -72,14 +76,66 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           // Increment frame counter
           frameCountRef.current++;
 
-          // Update tracking status with debounce
-          const shouldBeTracking = isTracking 
-            ? averageMatches >= STOP_TRACKING_THRESHOLD
-            : averageMatches >= START_TRACKING_THRESHOLD;
+          // More stringent criteria for tracking
+          let shouldBeTracking;
+          
+          if (isTracking) {
+            // Need decent match count OR high consistency to maintain tracking
+            shouldBeTracking = averageMatches >= STOP_TRACKING_THRESHOLD || 
+                             (averageMatches >= 15 && consistencyRatio > 0.5);
+          } else {
+            // Need BOTH good match count AND good consistency to start tracking
+            shouldBeTracking = averageMatches >= START_TRACKING_THRESHOLD && 
+                             consistencyRatio > MIN_CONSISTENCY_RATIO;
+          }
+
+          // Check for frame distribution - another safeguard against accidental matches
+          if (shouldBeTracking && !isTracking) {
+            // Calculate frame coverage - points should be distributed across the frame
+            const frameWidth = currentVideo.videoWidth;
+            const frameHeight = currentVideo.videoHeight;
+            
+            // Divide frame into grid cells and check distribution
+            const cellSize = 100; // pixels
+            const cellsX = Math.ceil(frameWidth / cellSize);
+            const cellsY = Math.ceil(frameHeight / cellSize);
+            const grid = Array(cellsY).fill(0).map(() => Array(cellsX).fill(0));
+            
+            // Count points in each cell
+            matches.forEach(match => {
+              const point = framePoints[match.queryIdx];
+              const cellX = Math.floor(point.x / cellSize);
+              const cellY = Math.floor(point.y / cellSize);
+              if (cellX >= 0 && cellX < cellsX && cellY >= 0 && cellY < cellsY) {
+                grid[cellY][cellX]++;
+              }
+            });
+            
+            // Count non-empty cells
+            let nonEmptyCells = 0;
+            let totalCells = 0;
+            for (let y = 0; y < cellsY; y++) {
+              for (let x = 0; x < cellsX; x++) {
+                totalCells++;
+                if (grid[y][x] > 0) nonEmptyCells++;
+              }
+            }
+            
+            // Calculate cell coverage ratio
+            const coverageRatio = nonEmptyCells / totalCells;
+            
+            // We want points to be clustered, not spread all over the frame
+            // Too much coverage might indicate random matches in the environment
+            if (coverageRatio > 0.6) {
+              console.log('Points too spread out, likely false positive');
+              shouldBeTracking = false;
+            }
+          }
 
           if (shouldBeTracking !== isTracking && frameCountRef.current >= MIN_FRAMES_BEFORE_CHANGE) {
             console.log('State change:', {
               averageMatches,
+              consistencyRatio,
               threshold: isTracking ? STOP_TRACKING_THRESHOLD : START_TRACKING_THRESHOLD,
               frameCount: frameCountRef.current
             });
@@ -121,8 +177,9 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
             ctx.font = '24px Arial';
             ctx.fillText(`Tracking: ${isTracking ? 'YES' : 'NO'}`, 10, 30);
             ctx.fillText(`Matches: ${averageMatches}/${isTracking ? STOP_TRACKING_THRESHOLD : START_TRACKING_THRESHOLD}`, 10, 60);
-            ctx.fillText(`Frame Buffer: ${lastFramesRef.current.length}/${FRAME_BUFFER_SIZE}`, 10, 90);
-            ctx.fillText(`Frames Since Change: ${frameCountRef.current}/${MIN_FRAMES_BEFORE_CHANGE}`, 10, 120);
+            ctx.fillText(`Consistency: ${(consistencyRatio * 100).toFixed(1)}%`, 10, 90); 
+            ctx.fillText(`Min Consistency: ${(MIN_CONSISTENCY_RATIO * 100).toFixed(1)}%`, 10, 120);
+            ctx.fillText(`Frames Since Change: ${frameCountRef.current}/${MIN_FRAMES_BEFORE_CHANGE}`, 10, 150);
           }
         }
 
@@ -234,7 +291,16 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   }, [videoUrl]);
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ 
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      overflow: 'hidden',
+      margin: 0,
+      padding: 0
+    }}>
       {/* Camera Layer */}
       <video 
         ref={videoRef}
