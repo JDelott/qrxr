@@ -96,10 +96,10 @@ function App() {
             height: img.height,
             features: features,
             points: features.map(f => ({ pt: f.pt })),
-            imageUrl: result.imageUrl // Use the URL from the server response
+            imageUrl: result.imageUrl // This will be used by the tracker now
           };
 
-          console.log('Setting tracking data:', newTrackingData);
+          console.log('Setting tracking data with image URL:', result.imageUrl);
           setTrackingData(newTrackingData);
         } catch (error) {
           console.error('Error processing image:', error);

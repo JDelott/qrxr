@@ -6,6 +6,15 @@ export interface FeatureMatch {
   distance: number;
 }
 
+export interface FrameData {
+  points: Point[];
+  descriptors: Float32Array[];
+}
+
+interface CornerPoint extends Point {
+  response: number;
+}
+
 export class FrameProcessor {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -40,12 +49,86 @@ export class FrameProcessor {
     }
   }
 
-  private detectFeatures(imageData: ImageData, isTargetImage: boolean = false): Point[] {
+  public async getFrameData(video: HTMLVideoElement): Promise<FrameData> {
+    if (!video.videoWidth || !video.videoHeight) {
+      return { points: [], descriptors: [] };
+    }
+
+    this.canvas.width = video.videoWidth;
+    this.canvas.height = video.videoHeight;
+    this.ctx.drawImage(video, 0, 0);
+    
+    try {
+      const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+      
+      // Apply image preprocessing to enhance features
+      const processedImageData = this.preprocessImage(imageData);
+      
+      // Detect features with emphasis on color boundaries
+      const points = this.detectFeaturesEnhanced(processedImageData, 1000);
+      
+      // Generate richer descriptors
+      const features = points.map(point => {
+        const descriptor = this.computeEnhancedDescriptor(processedImageData, point);
+        return {
+          pt: point,
+          descriptor: new Float32Array(descriptor)
+        };
+      });
+      
+      return {
+        points: features.map(f => f.pt),
+        descriptors: features.map(f => f.descriptor)
+      };
+    } catch (error) {
+      console.error('Error getting frame data:', error);
+      return { points: [], descriptors: [] };
+    }
+  }
+
+  private preprocessImage(imageData: ImageData): ImageData {
+    const data = new Uint8ClampedArray(imageData.data);
+    const width = imageData.width;
+    const height = imageData.height;
+    
+    // Apply contrast enhancement
+    for (let i = 0; i < data.length; i += 4) {
+      // Enhance contrast
+      data[i] = this.adjustContrast(data[i], 1.2);      // R
+      data[i + 1] = this.adjustContrast(data[i + 1], 1.2); // G
+      data[i + 2] = this.adjustContrast(data[i + 2], 1.2); // B
+      
+      // Slightly sharpen edges by emphasizing color differences
+      if (i > width * 4 && i % 4 === 0) {
+        const prevPixelR = data[i - 4];
+        const prevPixelG = data[i - 3];
+        const prevPixelB = data[i - 2];
+        
+        const colorDiff = Math.abs(data[i] - prevPixelR) + 
+                         Math.abs(data[i + 1] - prevPixelG) + 
+                         Math.abs(data[i + 2] - prevPixelB);
+        
+        if (colorDiff > 30) { // If significant color change
+          data[i] = Math.min(255, data[i] * 1.1);
+          data[i + 1] = Math.min(255, data[i + 1] * 1.1);
+          data[i + 2] = Math.min(255, data[i + 2] * 1.1);
+        }
+      }
+    }
+    
+    // Create new ImageData from the processed data
+    return new ImageData(data, width, height);
+  }
+  
+  private adjustContrast(value: number, factor: number): number {
+    return Math.min(255, Math.max(0, 128 + (value - 128) * factor));
+  }
+
+  private detectFeatures(imageData: ImageData, detailed: boolean = false, maxPoints: number = 500): Point[] {
     const { data, width, height } = imageData;
-    const points: Point[] = [];
-    const threshold = isTargetImage ? 3 : 10; // Even lower threshold for target image
-    const gridSize = isTargetImage ? 3 : 6;   // Smaller grid for finer detection
-    const maxPoints = isTargetImage ? 2000 : 500; // Increased max points
+    const points: CornerPoint[] = [];
+    const threshold = detailed ? 3 : 10; // Even lower threshold for target image
+    const gridSize = detailed ? 3 : 6;   // Smaller grid for finer detection
     
     // Divide image into smaller cells
     const cellsX = 10;  // More cells
@@ -71,7 +154,7 @@ export class FrameProcessor {
     // Process each cell
     for (let cellY = 0; cellY < cellsY; cellY++) {
       for (let cellX = 0; cellX < cellsX; cellX++) {
-        const cellPoints: Point[] = [];
+        const cellPoints: CornerPoint[] = [];
         const startX = cellX * cellWidth;
         const startY = cellY * cellHeight;
         const endX = Math.min(startX + cellWidth, width - gridSize);
@@ -119,7 +202,7 @@ export class FrameProcessor {
               }
               
               if (isMax) {
-                cellPoints.push({ x, y });
+                cellPoints.push({ x, y, response: cornerScore });
               }
             }
           }
@@ -137,12 +220,12 @@ export class FrameProcessor {
       }
     }
     
-    // Final sort of all points by score
-    return points.sort((a, b) => {
-      const scoreA = this.getCornerScore(gray, width, a.x, a.y);
-      const scoreB = this.getCornerScore(gray, width, b.x, b.y);
-      return scoreB - scoreA;
-    }).slice(0, maxPoints);
+    // Sort by response and take the top N strongest points
+    const sortedCorners = points.sort((a, b) => b.response - a.response);
+    return sortedCorners.slice(0, maxPoints).map(corner => ({ 
+      x: corner.x, 
+      y: corner.y
+    }));
   }
 
   private getCornerScore(gray: Uint8Array, width: number, x: number, y: number): number {
@@ -214,10 +297,177 @@ export class FrameProcessor {
     
     try {
       const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
-      return this.detectFeatures(imageData, false);
+      const points = this.detectFeatures(imageData, false);
+      
+      // Generate descriptors for each point
+      const features = points.map(point => ({
+        pt: point,
+        descriptor: new Float32Array(this.computeDescriptor(imageData, point))
+      }));
+      
+      return features.map(f => f.pt);
     } catch (error) {
       console.error('Error processing frame:', error);
       return [];
     }
+  }
+
+  private detectFeaturesEnhanced(imageData: ImageData, maxPoints: number = 500): Point[] {
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    
+    // Harris corner detection with color info for cartoon images
+    const corners: CornerPoint[] = [];
+    const blockSize = 5;
+    const threshold = 20000;
+    
+    for (let y = blockSize; y < height - blockSize; y++) {
+      for (let x = blockSize; x < width - blockSize; x++) {
+        // Calculate gradients with color channels weighted for cartoon images
+        let Ixx = 0, Iyy = 0, Ixy = 0;
+        
+        for (let j = -blockSize; j <= blockSize; j++) {
+          for (let i = -blockSize; i <= blockSize; i++) {
+            const idx = ((y + j) * width + (x + i)) * 4;
+            
+            // Weight red and blue channels higher for cartoon images
+            const r = data[idx] * 0.5;
+            const g = data[idx + 1] * 0.3;
+            const b = data[idx + 2] * 0.5;
+            
+            // Simple weighted gradient
+            const dx = r + g + b - (data[idx + 4] * 0.5 + data[idx + 5] * 0.3 + data[idx + 6] * 0.5);
+            const dy = r + g + b - (data[idx + width * 4] * 0.5 + data[idx + width * 4 + 1] * 0.3 + data[idx + width * 4 + 2] * 0.5);
+            
+            Ixx += dx * dx;
+            Iyy += dy * dy;
+            Ixy += dx * dy;
+          }
+        }
+        
+        // Harris corner response: det(M) - k * trace(M)^2
+        const k = 0.04;
+        const det = Ixx * Iyy - Ixy * Ixy;
+        const trace = Ixx + Iyy;
+        const response = det - k * trace * trace;
+        
+        if (response > threshold) {
+          // Check if this is a local maximum
+          let isMax = true;
+          
+          for (let j = -1; j <= 1 && isMax; j++) {
+            for (let i = -1; i <= 1 && isMax; i++) {
+              if (i === 0 && j === 0) continue;
+              
+              const nidx = ((y + j) * width + (x + i)) * 4;
+              const nr = data[nidx] * 0.5;
+              const ng = data[nidx + 1] * 0.3;
+              const nb = data[nidx + 2] * 0.5;
+              const nval = nr + ng + nb;
+              
+              const cidx = (y * width + x) * 4;
+              const cr = data[cidx] * 0.5;
+              const cg = data[cidx + 1] * 0.3;
+              const cb = data[cidx + 2] * 0.5;
+              const cval = cr + cg + cb;
+              
+              if (nval > cval) isMax = false;
+            }
+          }
+          
+          if (isMax) {
+            corners.push({ x, y, response });
+          }
+        }
+      }
+    }
+    
+    // Sort by response and take the top N strongest points
+    const sortedCorners = corners.sort((a, b) => b.response - a.response);
+    return sortedCorners.slice(0, maxPoints).map(corner => ({
+      x: corner.x,
+      y: corner.y
+    }));
+  }
+  
+  private computeEnhancedDescriptor(imageData: ImageData, point: Point): number[] {
+    const { width, height, data } = imageData;
+    const patchSize = 16;
+    const halfSize = patchSize / 2;
+    const descriptor: number[] = [];
+    
+    // Check if the point is too close to the edge
+    const x = Math.min(Math.max(point.x, halfSize), width - halfSize - 1);
+    const y = Math.min(Math.max(point.y, halfSize), height - halfSize - 1);
+    
+    // Extract larger patch around the point
+    for (let j = -halfSize; j < halfSize; j += 4) {
+      for (let i = -halfSize; i < halfSize; i += 4) {
+        const px = Math.round(x + i);
+        const py = Math.round(y + j);
+        
+        // Get color channels at this point
+        const idx = (py * width + px) * 4;
+        const r = data[idx] / 255;
+        const g = data[idx + 1] / 255;
+        const b = data[idx + 2] / 255;
+        
+        // Add color information to descriptor
+        descriptor.push(r, g, b);
+        
+        // Add simple gradient information
+        if (px < width - 1 && py < height - 1) {
+          const hDiff = (data[idx + 4] - data[idx]) / 255;
+          const vDiff = (data[idx + width * 4] - data[idx]) / 255;
+          descriptor.push(hDiff, vDiff);
+        } else {
+          descriptor.push(0, 0);
+        }
+      }
+    }
+    
+    // Add histogram of oriented gradients features
+    const gradBins = 8;
+    const gradHist = new Array(gradBins).fill(0);
+    
+    for (let j = -halfSize; j < halfSize; j++) {
+      for (let i = -halfSize; i < halfSize; i++) {
+        const px = Math.round(x + i);
+        const py = Math.round(y + j);
+        
+        if (px < 1 || px >= width - 1 || py < 1 || py >= height - 1) continue;
+        
+        const idx = (py * width + px) * 4;
+        
+        // Calculate gradient
+        const dx = data[idx + 4] - data[idx - 4] + 
+                   data[idx + 5] - data[idx - 3] + 
+                   data[idx + 6] - data[idx - 2];
+        
+        const dy = data[idx + width * 4] - data[idx - width * 4] + 
+                   data[idx + width * 4 + 1] - data[idx - width * 4 + 1] + 
+                   data[idx + width * 4 + 2] - data[idx - width * 4 + 2];
+        
+        const magnitude = Math.sqrt(dx * dx + dy * dy);
+        const angle = (Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI);
+        const bin = Math.floor(angle * gradBins) % gradBins;
+        
+        gradHist[bin] += magnitude;
+      }
+    }
+    
+    // Normalize the histogram
+    const histSum = gradHist.reduce((sum, val) => sum + val, 0);
+    if (histSum > 0) {
+      for (let i = 0; i < gradBins; i++) {
+        gradHist[i] /= histSum;
+        descriptor.push(gradHist[i]);
+      }
+    } else {
+      descriptor.push(...new Array(gradBins).fill(0));
+    }
+    
+    return descriptor;
   }
 }

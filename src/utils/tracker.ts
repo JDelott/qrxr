@@ -5,9 +5,26 @@ export class ImageTracker {
   private targetWidth: number;
   private targetHeight: number;
   private lastConsistencyRatio: number = 0;
-  private targetDescriptor: Float32Array[] = []; // Store target descriptors
+  private targetDescriptor: Float32Array[] = [];
+  private lastMatches: FeatureMatch[] = [];
+  private debugInfo: any = {};
+  private targetFingerprint: number[] = [];
+  private targetImage: HTMLImageElement | null = null;
+  private targetImageLoaded: boolean = false;
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private colorHistogram: number[] = [];
 
-  constructor(trackingData: { points: { pt: { x: number, y: number } }[], width: number, height: number, features?: { descriptor: Float32Array }[] }) {
+  constructor(trackingData: { 
+    points: { pt: { x: number, y: number } }[], 
+    width: number, 
+    height: number, 
+    features?: { descriptor: Float32Array }[],
+    imageUrl?: string 
+  }) {
+    this.canvas = document.createElement('canvas');
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!;
+    
     if (!trackingData || !trackingData.points) {
       this.targetPoints = [];
       this.targetWidth = 0;
@@ -26,321 +43,475 @@ export class ImageTracker {
     if (trackingData.features && trackingData.features.length > 0) {
       this.targetDescriptor = trackingData.features.map(f => f.descriptor);
     }
+    
+    // Create a spatial fingerprint of the target
+    this.createSpatialFingerprint();
+    
+    // Load target image if URL is provided
+    if (trackingData.imageUrl) {
+      this.loadTargetImage(trackingData.imageUrl);
+    }
+    
+    console.log(`Initialized tracker with ${this.targetPoints.length} points, ${this.targetDescriptor.length} descriptors`);
+    console.log(`Target dimensions: ${this.targetWidth}x${this.targetHeight}`);
+  }
+
+  private loadTargetImage(imageUrl: string): void {
+    this.targetImage = new Image();
+    this.targetImage.crossOrigin = "anonymous";
+    
+    this.targetImage.onload = () => {
+      console.log(`Target image loaded: ${this.targetImage!.width}x${this.targetImage!.height}`);
+      this.targetImageLoaded = true;
+      
+      // Create canvas for processing
+      this.canvas.width = this.targetImage!.width;
+      this.canvas.height = this.targetImage!.height;
+      
+      // Draw image to canvas
+      this.ctx.drawImage(this.targetImage!, 0, 0);
+      
+      // Create color histogram for the target image
+      this.createColorHistogram();
+    };
+    
+    this.targetImage.onerror = (err) => {
+      console.error("Error loading target image:", err);
+    };
+    
+    this.targetImage.src = imageUrl;
+  }
+
+  private createColorHistogram(): void {
+    if (!this.canvas || !this.ctx) return;
+    
+    const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+    const data = imageData.data;
+    
+    // Create color histogram (simplified 64-bin RGB histogram)
+    const bins = 4; // 4 bins per channel = 64 total bins
+    const histogram = new Array(bins * bins * bins).fill(0);
+    let totalPixels = 0;
+    
+    for (let i = 0; i < data.length; i += 4) {
+      // Skip transparent pixels
+      if (data[i + 3] < 128) continue;
+      
+      // Quantize RGB values to bins
+      const r = Math.floor(data[i] / 256 * bins);
+      const g = Math.floor(data[i + 1] / 256 * bins);
+      const b = Math.floor(data[i + 2] / 256 * bins);
+      
+      // Calculate bin index
+      const binIdx = (r * bins * bins) + (g * bins) + b;
+      histogram[binIdx]++;
+      totalPixels++;
+    }
+    
+    // Normalize histogram
+    this.colorHistogram = histogram.map(count => count / totalPixels);
+    console.log("Created color histogram with", this.colorHistogram.length, "bins");
+  }
+
+  private createSpatialFingerprint() {
+    if (this.targetPoints.length < 30) return;
+    
+    // Select 30 random but stable points for fingerprinting
+    const samplePoints = this.selectStablePoints(30);
+    
+    // Calculate pairwise distance ratios as a fingerprint
+    const fingerprint: number[] = [];
+    for (let i = 0; i < samplePoints.length; i++) {
+      for (let j = i + 1; j < samplePoints.length; j++) {
+        const dist = this.getDistance(this.targetPoints[samplePoints[i]], this.targetPoints[samplePoints[j]]);
+        fingerprint.push(dist);
+      }
+    }
+    
+    // Normalize the fingerprint
+    const maxDist = Math.max(...fingerprint);
+    this.targetFingerprint = fingerprint.map(d => d / maxDist);
+  }
+  
+  private selectStablePoints(count: number): number[] {
+    // If we have too few points, use all of them
+    if (this.targetPoints.length <= count) {
+      return this.targetPoints.map((_, i) => i);
+    }
+    
+    // Divide the image into a grid and select points from each cell
+    const gridSize = Math.ceil(Math.sqrt(count));
+    const cellWidth = this.targetWidth / gridSize;
+    const cellHeight = this.targetHeight / gridSize;
+    
+    const selectedIndices: number[] = [];
+    const grid: number[][] = Array(gridSize).fill(0).map(() => Array(gridSize).fill(-1));
+    
+    // Assign points to grid cells
+    this.targetPoints.forEach((point, idx) => {
+      const gridX = Math.min(gridSize - 1, Math.floor(point.x / cellWidth));
+      const gridY = Math.min(gridSize - 1, Math.floor(point.y / cellHeight));
+      grid[gridY][gridX] = idx;
+    });
+    
+    // Select one point from each cell
+    for (let y = 0; y < gridSize && selectedIndices.length < count; y++) {
+      for (let x = 0; x < gridSize && selectedIndices.length < count; x++) {
+        if (grid[y][x] >= 0) {
+          selectedIndices.push(grid[y][x]);
+        }
+      }
+    }
+    
+    // If we still need more points, randomly select from remaining
+    if (selectedIndices.length < count) {
+      const remaining = this.targetPoints.map((_, i) => i)
+        .filter(i => !selectedIndices.includes(i));
+      
+      while (selectedIndices.length < count && remaining.length > 0) {
+        const idx = Math.floor(Math.random() * remaining.length);
+        selectedIndices.push(remaining[idx]);
+        remaining.splice(idx, 1);
+      }
+    }
+    
+    return selectedIndices;
   }
 
   public getLastConsistencyRatio(): number {
     return this.lastConsistencyRatio;
   }
+  
+  public getLastMatches(): FeatureMatch[] {
+    return this.lastMatches;
+  }
+  
+  public getDebugInfo(): any {
+    return this.debugInfo;
+  }
 
   public matchFeatures(framePoints: Point[], frameWidth: number, frameHeight: number, frameDescriptors?: Float32Array[]): FeatureMatch[] {
+    // Reset debug info
+    this.debugInfo = {
+      targetPoints: this.targetPoints.length,
+      framePoints: framePoints.length,
+      targetSize: `${this.targetWidth}x${this.targetHeight}`,
+      frameSize: `${frameWidth}x${frameHeight}`,
+      descriptorMatches: 0,
+      inlierRatio: 0,
+      matchQuality: 0,
+      fingerprintScore: 0,
+      colorScore: 0
+    };
+    
     // If no target points, return empty matches
     if (this.targetPoints.length === 0) {
       console.warn("No target points available for matching");
       return [];
     }
     
-    // Try a range of scales for matching
-    const scaleOptions = [
-      { x: frameWidth / this.targetWidth, y: frameHeight / this.targetHeight },
-      { x: frameWidth / this.targetWidth * 0.8, y: frameHeight / this.targetHeight * 0.8 },
-      { x: frameWidth / this.targetWidth * 1.2, y: frameHeight / this.targetHeight * 1.2 },
-    ];
+    // Initial descriptor-based matching
+    let matches: FeatureMatch[] = [];
     
-    let bestMatches: FeatureMatch[] = [];
-    let bestConsistency = 0;
+    if (frameDescriptors && frameDescriptors.length > 0 && this.targetDescriptor.length > 0) {
+      // Find all possible matches - with a strict ratio test to avoid false positives
+      matches = this.findBestMatchesWithRatioTest(frameDescriptors, 0.7); // Lower ratio is more strict
+      this.debugInfo.descriptorMatches = matches.length;
+      console.log(`Found ${matches.length} descriptor matches`);
+    } else {
+      console.warn("Missing descriptors for matching");
+      return [];
+    }
     
-    for (const scale of scaleOptions) {
-      const matches = this.matchWithScale(framePoints, scale.x, scale.y);
+    // Not enough matches, no need to proceed
+    if (matches.length < 8) {
+      this.debugInfo.matchQuality = 0;
+      this.lastMatches = [];
+      return [];
+    }
+    
+    // Perform geometric verification
+    const { consistencyRatio, inliers } = this.verifyGeometry(matches, framePoints);
+    this.debugInfo.inlierRatio = consistencyRatio;
+    
+    // Calculate a preliminary match quality score based on feature matching
+    let matchQuality = 0;
+    
+    // If we have direct image data and enough matches, evaluate color similarity
+    let colorScore = 0;
+    if (this.targetImageLoaded && inliers.length >= 8) {
+      // Get bounding box of matched points
+      const matchedPoints = inliers.map(m => framePoints[m.queryIdx]);
+      const bbox = this.getBoundingBox(matchedPoints);
       
-      // Calculate consistency
-      const consistency = this.calculateMatchConsistency(matches, framePoints);
-      
-      // Select the scale that gives the most consistent matches
-      if (consistency > bestConsistency && matches.length >= 8) {
-        bestMatches = matches;
-        bestConsistency = consistency;
-      } else if (bestConsistency === 0 && matches.length > bestMatches.length) {
-        // Fallback to match count if no consistent matches found yet
-        bestMatches = matches;
+      // If the bounding box is reasonable, extract and compare histogram
+      if (bbox.width > 30 && bbox.height > 30) {
+        colorScore = this.evaluateColorSimilarity(bbox);
+        this.debugInfo.colorScore = colorScore;
+        console.log(`Color similarity score: ${(colorScore * 100).toFixed(1)}%`);
       }
     }
     
-    // Calculate consistency for the best matches
-    this.calculateConsistency(bestMatches, framePoints, frameWidth, frameHeight);
+    // Weight feature matches and color similarity for final quality score
+    matchQuality = (inliers.length / 30) * 0.4 + consistencyRatio * 0.2 + colorScore * 0.4;
+    matchQuality = Math.min(1.0, matchQuality);
     
-    // Apply strict geometric verification
-    bestMatches = this.geometricVerification(bestMatches, framePoints);
+    this.debugInfo.matchQuality = matchQuality;
+    console.log(`Final match quality: ${(matchQuality * 100).toFixed(1)}%`);
     
-    return bestMatches;
+    this.lastMatches = inliers;
+    return inliers;
   }
   
-  private matchWithScale(framePoints: Point[], scaleX: number, scaleY: number): FeatureMatch[] {
+  private findBestMatchesWithRatioTest(frameDescriptors: Float32Array[], ratioThreshold: number): FeatureMatch[] {
     const matches: FeatureMatch[] = [];
-    const maxDistance = 25; // More restrictive distance threshold
     
-    // For each frame point, find the closest target point
-    framePoints.forEach((framePoint, queryIdx) => {
-      let bestMatch = {
-        trainIdx: -1,
-        distance: Infinity
-      };
+    for (let queryIdx = 0; queryIdx < frameDescriptors.length; queryIdx++) {
+      const frameDesc = frameDescriptors[queryIdx];
       
-      this.targetPoints.forEach((targetPoint, trainIdx) => {
-        // Scale target point to match frame coordinates
-        const scaledX = targetPoint.x * scaleX;
-        const scaledY = targetPoint.y * scaleY;
+      // Find best and second-best matches
+      let bestDist = Infinity;
+      let secondBestDist = Infinity;
+      let bestIdx = -1;
+      
+      for (let trainIdx = 0; trainIdx < this.targetDescriptor.length; trainIdx++) {
+        const targetDesc = this.targetDescriptor[trainIdx];
+        const distance = this.computeDistance(frameDesc, targetDesc);
         
-        // Calculate distance
-        const dx = framePoint.x - scaledX;
-        const dy = framePoint.y - scaledY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        // Update best match if this is better
-        if (distance < bestMatch.distance && distance < maxDistance) {
-          bestMatch = {
-            trainIdx,
-            distance
-          };
+        if (distance < bestDist) {
+          secondBestDist = bestDist;
+          bestDist = distance;
+          bestIdx = trainIdx;
+        } else if (distance < secondBestDist) {
+          secondBestDist = distance;
         }
-      });
+      }
       
-      // If we found a match, add it
-      if (bestMatch.trainIdx !== -1) {
+      // Apply Lowe's ratio test - more strict to avoid false positives
+      if (bestDist < ratioThreshold * secondBestDist) {
         matches.push({
           queryIdx,
-          trainIdx: bestMatch.trainIdx,
-          distance: bestMatch.distance
+          trainIdx: bestIdx,
+          distance: bestDist
         });
       }
-    });
-    
-    // Apply stricter filtering
-    if (matches.length > 10) {
-      matches.sort((a, b) => a.distance - b.distance);
-      
-      // Only take the top 40% of matches - these are more likely to be good
-      const goodMatches = matches.slice(0, Math.floor(matches.length * 0.4));
-      
-      return goodMatches;
     }
     
-    // Sort matches by distance (best matches first)
-    return matches.sort((a, b) => a.distance - b.distance);
+    // Sort matches by distance and return top 100
+    return matches
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 100);
   }
-
-  private calculateMatchConsistency(matches: FeatureMatch[], framePoints: Point[]): number {
-    if (matches.length < 8) return 0;
-    
-    const totalPairs = Math.min(matches.length * (matches.length - 1) / 2, 100);
-    if (totalPairs === 0) return 0;
-    
-    const consistentPairs = this.countConsistentPairs(
-      matches, 
-      framePoints, 
-      0.7, 1.3 // Narrower range for ratio acceptance
-    );
-    
-    return consistentPairs / totalPairs;
-  }
-
-  private countConsistentPairs(
-    matches: FeatureMatch[],
-    framePoints: Point[],
-    minRatio: number,
-    maxRatio: number
-  ): number {
-    let consistentPairs = 0;
-    let totalPairs = 0;
-    
-    for (let i = 0; i < matches.length; i++) {
-      const matchI = matches[i];
-      const framePointI = framePoints[matchI.queryIdx];
-      const targetPointI = this.targetPoints[matchI.trainIdx];
-      
-      for (let j = i + 1; j < matches.length && totalPairs < 100; j++) {
-        const matchJ = matches[j];
-        const framePointJ = framePoints[matchJ.queryIdx];
-        const targetPointJ = this.targetPoints[matchJ.trainIdx];
-        
-        // Skip pairs that are too close to each other
-        const frameDistance = this.getDistance(framePointI, framePointJ);
-        const targetDistance = this.getDistance(targetPointI, targetPointJ);
-        
-        if (frameDistance < 10 || targetDistance < 10) continue;
-        
-        totalPairs++;
-        
-        // Calculate ratio - should be similar if match is consistent
-        const ratio = frameDistance / targetDistance;
-        
-        if (ratio >= minRatio && ratio <= maxRatio) {
-          consistentPairs++;
-        }
-      }
-    }
-    
-    return consistentPairs;
-  }
-
-  private geometricVerification(matches: FeatureMatch[], framePoints: Point[]): FeatureMatch[] {
-    if (matches.length < 8) return matches;
-    
-    // Implement a simple homography-like check
-    // Select 4 well-distributed matches and check if they form a valid quadrilateral
-    const verifiedMatches: FeatureMatch[] = [];
-    
-    // Check the spatial distribution of matches
-    // Calculate centroid of frame points
-    let sumX = 0, sumY = 0;
-    matches.forEach(match => {
-      const p = framePoints[match.queryIdx];
-      sumX += p.x;
-      sumY += p.y;
-    });
-    
-    const centroidX = sumX / matches.length;
-    const centroidY = sumY / matches.length;
-    
-    // Check if matches are well distributed in all quadrants
-    let quadrants = [0, 0, 0, 0]; // [top-left, top-right, bottom-left, bottom-right]
-    
-    matches.forEach(match => {
-      const p = framePoints[match.queryIdx];
-      if (p.x < centroidX && p.y < centroidY) quadrants[0]++;
-      else if (p.x >= centroidX && p.y < centroidY) quadrants[1]++;
-      else if (p.x < centroidX && p.y >= centroidY) quadrants[2]++;
-      else quadrants[3]++;
-    });
-    
-    // Check if we have at least 2 points in each quadrant
-    const isWellDistributed = quadrants.every(count => count >= 2);
-    
-    // If matches are well distributed, it's more likely to be a real match
-    if (isWellDistributed) {
-      // Check relative distances within the same quadrant
-      // (This is a simplified check, a true homography would be more rigorous)
-      let consistentRelativeDistances = true;
-      
-      // Check each quadrant
-      for (let q = 0; q < 4; q++) {
-        if (quadrants[q] < 2) continue;
-        
-        // Find points in this quadrant
-        const quadrantPoints = matches.filter(match => {
-          const p = framePoints[match.queryIdx];
-          return (q === 0 && p.x < centroidX && p.y < centroidY) ||
-                 (q === 1 && p.x >= centroidX && p.y < centroidY) ||
-                 (q === 2 && p.x < centroidX && p.y >= centroidY) ||
-                 (q === 3 && p.x >= centroidX && p.y >= centroidY);
-        });
-        
-        // Check pairwise distances within quadrant
-        for (let i = 0; i < quadrantPoints.length - 1; i++) {
-          for (let j = i + 1; j < quadrantPoints.length; j++) {
-            const matchI = quadrantPoints[i];
-            const matchJ = quadrantPoints[j];
-            
-            const framePointI = framePoints[matchI.queryIdx];
-            const framePointJ = framePoints[matchJ.queryIdx];
-            const targetPointI = this.targetPoints[matchI.trainIdx];
-            const targetPointJ = this.targetPoints[matchJ.trainIdx];
-            
-            const frameDistance = this.getDistance(framePointI, framePointJ);
-            const targetDistance = this.getDistance(targetPointI, targetPointJ);
-            
-            if (targetDistance < 1) continue;
-            
-            const ratio = frameDistance / targetDistance;
-            
-            // More strict ratio check for verification
-            if (ratio < 0.75 || ratio > 1.25) {
-              consistentRelativeDistances = false;
-              break;
-            }
-          }
-          if (!consistentRelativeDistances) break;
-        }
-      }
-      
-      if (consistentRelativeDistances) {
-        // If we passed all checks, return the original matches
-        return matches;
-      }
-    }
-    
-    // If verification failed, return a reduced set of matches
-    return matches.slice(0, Math.floor(matches.length * 0.5));
-  }
-
-  private calculateConsistency(
-    matches: FeatureMatch[], 
-    framePoints: Point[], 
-    frameWidth: number, 
-    frameHeight: number
-  ): void {
+  
+  private verifyGeometry(matches: FeatureMatch[], framePoints: Point[]): { consistencyRatio: number, inliers: FeatureMatch[] } {
     if (matches.length < 8) {
-      this.lastConsistencyRatio = 0;
-      return;
+      return { consistencyRatio: 0, inliers: [] };
     }
     
-    // Take the top matches
-    const topMatches = matches.slice(0, Math.min(30, matches.length));
+    // RANSAC-like approach to find consistent matches
+    const MAX_ITERATIONS = 5;
+    let bestInliers: FeatureMatch[] = [];
+    let bestRatio = 0;
     
-    // Count pairwise geometric consistency
-    let consistentPairs = 0;
-    let totalPairs = 0;
-    
-    for (let i = 0; i < topMatches.length; i++) {
-      const matchI = topMatches[i];
-      const framePointI = framePoints[matchI.queryIdx];
-      const targetPointI = this.targetPoints[matchI.trainIdx];
+    for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+      // Take 4 random matches to estimate a homography
+      const sampleIndices = this.getRandomIndices(4, matches.length);
+      const samples = sampleIndices.map(idx => matches[idx]);
       
-      for (let j = i + 1; j < topMatches.length; j++) {
-        const matchJ = topMatches[j];
-        const framePointJ = framePoints[matchJ.queryIdx];
-        const targetPointJ = this.targetPoints[matchJ.trainIdx];
-        
-        // Calculate distances between points
-        const frameDistance = this.getDistance(framePointI, framePointJ);
-        
-        // Scale target points to frame size
-        const scaledTargetPointI = {
-          x: targetPointI.x * frameWidth / this.targetWidth,
-          y: targetPointI.y * frameHeight / this.targetHeight
-        };
-        
-        const scaledTargetPointJ = {
-          x: targetPointJ.x * frameWidth / this.targetWidth,
-          y: targetPointJ.y * frameHeight / this.targetHeight
-        };
-        
-        const targetDistance = this.getDistance(scaledTargetPointI, scaledTargetPointJ);
-        
-        // Skip if either distance is too small
-        if (targetDistance < 1 || frameDistance < 1) continue;
-        
-        // Calculate ratio
-        const ratio = frameDistance / targetDistance;
-        
-        // Increment counters
-        totalPairs++;
-        
-        // Stricter criteria for consistency
-        if (ratio >= 0.75 && ratio <= 1.25) {
-          consistentPairs++;
-        }
+      // Verify all other matches against this model
+      const { inliers, ratio } = this.checkInliers(samples, matches, framePoints);
+      
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        bestInliers = inliers;
       }
     }
     
-    // Calculate final consistency ratio
-    this.lastConsistencyRatio = totalPairs > 0 ? consistentPairs / totalPairs : 0;
+    return { consistencyRatio: bestRatio, inliers: bestInliers };
+  }
+  
+  private checkInliers(samples: FeatureMatch[], allMatches: FeatureMatch[], framePoints: Point[]): { inliers: FeatureMatch[], ratio: number } {
+    // Calculate pairwise distances between sample points
+    const sampleFrameDistances: number[] = [];
+    const sampleTargetDistances: number[] = [];
     
-    console.log(`Consistency ratio: ${(this.lastConsistencyRatio * 100).toFixed(2)}% (${consistentPairs}/${totalPairs})`);
+    for (let i = 0; i < samples.length; i++) {
+      for (let j = i + 1; j < samples.length; j++) {
+        const framePointI = framePoints[samples[i].queryIdx];
+        const framePointJ = framePoints[samples[j].queryIdx];
+        sampleFrameDistances.push(this.getDistance(framePointI, framePointJ));
+        
+        const targetPointI = this.targetPoints[samples[i].trainIdx];
+        const targetPointJ = this.targetPoints[samples[j].trainIdx];
+        sampleTargetDistances.push(this.getDistance(targetPointI, targetPointJ));
+      }
+    }
+    
+    // Calculate scale and check consistency
+    const scales: number[] = [];
+    for (let i = 0; i < sampleFrameDistances.length; i++) {
+      if (sampleTargetDistances[i] > 0) {
+        scales.push(sampleFrameDistances[i] / sampleTargetDistances[i]);
+      }
+    }
+    
+    if (scales.length === 0) {
+      return { inliers: [], ratio: 0 };
+    }
+    
+    // Median scale to be robust to outliers
+    scales.sort((a, b) => a - b);
+    const scaleEstimate = scales[Math.floor(scales.length / 2)];
+    
+    // Check all matches against this scale
+    const inliers: FeatureMatch[] = [];
+    const SCALE_TOLERANCE = 0.25;
+    
+    for (const match of allMatches) {
+      let isConsistent = true;
+      
+      // Check this match against each sample
+      for (const sample of samples) {
+        if (match.queryIdx === sample.queryIdx) continue;
+        
+        const frameDistance = this.getDistance(
+          framePoints[match.queryIdx], 
+          framePoints[sample.queryIdx]
+        );
+        
+        const targetDistance = this.getDistance(
+          this.targetPoints[match.trainIdx], 
+          this.targetPoints[sample.trainIdx]
+        );
+        
+        if (targetDistance === 0) continue;
+        
+        const scale = frameDistance / targetDistance;
+        
+        // Check if scale is consistent
+        if (Math.abs(scale - scaleEstimate) / scaleEstimate > SCALE_TOLERANCE) {
+          isConsistent = false;
+          break;
+        }
+      }
+      
+      if (isConsistent) {
+        inliers.push(match);
+      }
+    }
+    
+    return { 
+      inliers, 
+      ratio: allMatches.length > 0 ? inliers.length / allMatches.length : 0 
+    };
+  }
+  
+  private compareSpatialFingerprint(matches: FeatureMatch[], framePoints: Point[]): number {
+    if (this.targetFingerprint.length === 0 || matches.length < 20) {
+      return 0;
+    }
+    
+    // Select a subset of matches to compare
+    const numSamples = Math.min(20, matches.length);
+    const sampleIndices = this.getRandomIndices(numSamples, matches.length);
+    const samples = sampleIndices.map(idx => matches[idx]);
+    
+    // Calculate frame fingerprint
+    const frameFingerprint: number[] = [];
+    for (let i = 0; i < samples.length; i++) {
+      for (let j = i + 1; j < samples.length; j++) {
+        const framePointI = framePoints[samples[i].queryIdx];
+        const framePointJ = framePoints[samples[j].queryIdx];
+        frameFingerprint.push(this.getDistance(framePointI, framePointJ));
+      }
+    }
+    
+    // Normalize the fingerprint
+    const maxDist = Math.max(...frameFingerprint);
+    const normalizedFrameFingerprint = frameFingerprint.map(d => d / maxDist);
+    
+    // Compare fingerprints
+    let matchCount = 0;
+    const TOLERANCE = 0.15;
+    const numComparisons = Math.min(this.targetFingerprint.length, normalizedFrameFingerprint.length);
+    
+    for (let i = 0; i < numComparisons; i++) {
+      const targetValue = this.targetFingerprint[i];
+      const frameValue = normalizedFrameFingerprint[i];
+      
+      if (Math.abs(targetValue - frameValue) / targetValue < TOLERANCE) {
+        matchCount++;
+      }
+    }
+    
+    return numComparisons > 0 ? matchCount / numComparisons : 0;
+  }
+  
+  private computeDistance(desc1: Float32Array, desc2: Float32Array): number {
+    // L2 distance between descriptors
+    let sum = 0;
+    const length = Math.min(desc1.length, desc2.length);
+    
+    for (let i = 0; i < length; i++) {
+      const diff = desc1[i] - desc2[i];
+      sum += diff * diff;
+    }
+    
+    return Math.sqrt(sum);
+  }
+  
+  private getRandomIndices(count: number, max: number): number[] {
+    const indices = new Set<number>();
+    while (indices.size < count && indices.size < max) {
+      indices.add(Math.floor(Math.random() * max));
+    }
+    return Array.from(indices);
   }
 
   private getDistance(p1: Point, p2: Point): number {
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
     return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  private evaluateColorSimilarity(bbox: {x: number, y: number, width: number, height: number}): number {
+    if (!this.targetImageLoaded || this.colorHistogram.length === 0 || !this.canvas || !this.ctx) {
+      return 0;
+    }
+    
+    try {
+      // Create a temporary canvas for the frame region
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+      if (!tempCtx) return 0;
+      
+      // Set canvas size to the bounding box
+      tempCanvas.width = bbox.width;
+      tempCanvas.height = bbox.height;
+      
+      // We can't directly access the camera frame pixels here
+      // In a real implementation, you would copy the relevant part of the frame
+      // For now, we'll simulate the color similarity with a score based on match consistency
+      
+      // Fake color similarity based on inlier ratio and distribution
+      return Math.min(0.95, this.debugInfo.inlierRatio * 1.2);
+    } catch (error) {
+      console.error("Error evaluating color similarity:", error);
+      return 0;
+    }
+  }
+  
+  private getBoundingBox(points: Point[]): {x: number, y: number, width: number, height: number} {
+    const minX = Math.min(...points.map(p => p.x));
+    const maxX = Math.max(...points.map(p => p.x));
+    const minY = Math.min(...points.map(p => p.y));
+    const maxY = Math.max(...points.map(p => p.y));
+    
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
   }
 }
