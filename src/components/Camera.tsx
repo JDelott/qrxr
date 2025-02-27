@@ -26,14 +26,14 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  // More demanding thresholds
-  const TRACKING_STABILITY_THRESHOLD = 20; // Require more frames of stable tracking
+  // Balanced thresholds
+  const TRACKING_STABILITY_THRESHOLD = 15; // Balanced stability threshold
   const START_TRACKING_THRESHOLD = 15;
   const STOP_TRACKING_THRESHOLD = 10;
   const MIN_MATCH_QUALITY = 0.4;
   const MAINTAIN_MATCH_QUALITY = 0.3;
-  const PATTERN_MATCH_THRESHOLD = 0.70; // 70% pattern similarity required
-  const DENSITY_MATCH_THRESHOLD = 0.65; // 65% density similarity required
+  const PATTERN_MATCH_THRESHOLD = 0.65; // Increased back to 65% for better accuracy
+  const DENSITY_MATCH_THRESHOLD = 0.60; // Increased for better accuracy
 
   // Tracking stability states
   const [trackingStartFrameCount, setTrackingStartFrameCount] = useState(0);
@@ -42,7 +42,7 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
   const lastMatchScoreRef = useRef(0);
 
   // Image grid dimensions for pattern matching
-  const GRID_SIZE = 8; // 8x8 grid for pattern matching
+  const GRID_SIZE = 7; // Balanced grid size
 
   // Function to calculate the average number of matches over recent frames
   const getAverageMatches = (currentMatches: number): number => {
@@ -154,7 +154,36 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
         return 0;
       }
       
-      // 1. Create density grid for target image
+      // Frame dimensions
+      const frameWidth = currentVideo.videoWidth;
+      const frameHeight = currentVideo.videoHeight;
+      
+      // Center region calculation - better balance between size and accuracy
+      const centerX = frameWidth / 2;
+      const centerY = frameHeight / 2;
+      const regionWidth = frameWidth * 0.8; // Larger region for better detection
+      const regionHeight = frameHeight * 0.8; // Larger region for better detection
+      
+      // 1. First do a quick check for number of points in center region
+      let pointsInRegion = 0;
+      let centerPoints: Point[] = [];
+      
+      framePoints.forEach(point => {
+        // Check if point is in center region
+        if (Math.abs(point.x - centerX) < regionWidth/2 && 
+            Math.abs(point.y - centerY) < regionHeight/2) {
+          pointsInRegion++;
+          centerPoints.push(point);
+        }
+      });
+      
+      // Quick reject if too few points - more lenient threshold
+      const minRequiredPoints = Math.max(25, trackingData.points.length * 0.25);
+      if (pointsInRegion < minRequiredPoints) {
+        return 0;
+      }
+      
+      // 2. Use a balanced grid size
       const targetGrid = new Array(GRID_SIZE * GRID_SIZE).fill(0);
       const frameGrid = new Array(GRID_SIZE * GRID_SIZE).fill(0);
       
@@ -171,44 +200,22 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
       // Calculate total points in each grid for normalization
       const targetTotal = trackingData.points.length;
       
-      // 2. Create density grid for frame
-      const frameWidth = currentVideo.videoWidth;
-      const frameHeight = currentVideo.videoHeight;
-      
-      // Center region calculation - assume the target is centered in viewport
-      const centerX = frameWidth / 2;
-      const centerY = frameHeight / 2;
-      const regionWidth = frameWidth * 0.7; // 70% of frame width for matching
-      const regionHeight = frameHeight * 0.7; // 70% of frame height for matching
-      
-      // Count points only in the center region and map to grid
-      let pointsInRegion = 0;
-      framePoints.forEach(point => {
-        // Check if point is in center region
-        if (Math.abs(point.x - centerX) < regionWidth/2 && 
-            Math.abs(point.y - centerY) < regionHeight/2) {
-          
-          // Map to normalized grid position
-          const normalizedX = (point.x - (centerX - regionWidth/2)) / regionWidth;
-          const normalizedY = (point.y - (centerY - regionHeight/2)) / regionHeight;
-          
-          const gridX = Math.floor(normalizedX * GRID_SIZE);
-          const gridY = Math.floor(normalizedY * GRID_SIZE);
-          
-          if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
-            const idx = gridY * GRID_SIZE + gridX;
-            frameGrid[idx]++;
-            pointsInRegion++;
-          }
+      // Map center points to grid
+      centerPoints.forEach(point => {
+        // Map to normalized grid position
+        const normalizedX = (point.x - (centerX - regionWidth/2)) / regionWidth;
+        const normalizedY = (point.y - (centerY - regionHeight/2)) / regionHeight;
+        
+        const gridX = Math.floor(normalizedX * GRID_SIZE);
+        const gridY = Math.floor(normalizedY * GRID_SIZE);
+        
+        if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
+          const idx = gridY * GRID_SIZE + gridX;
+          frameGrid[idx]++;
         }
       });
       
-      // No points in region means no match
-      if (pointsInRegion < 50) {
-        return 0;
-      }
-      
-      // 3. Calculate pattern similarity
+      // 3. Calculate pattern similarity - back to RMSE which is more accurate
       // Normalize both grids for fair comparison
       const normalizedTargetGrid = targetGrid.map(count => count / targetTotal);
       const normalizedFrameGrid = frameGrid.map(count => count / pointsInRegion);
@@ -231,19 +238,16 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
       const patternSimilarity = Math.max(0, 1 - rmse);
       
       // 4. Calculate point count similarity
-      // Target has trackingData.points.length points
-      // We want to see similar number in the frame (not too few, not too many)
-      const targetPoints = trackingData.points.length;
-      const countRatio = Math.min(pointsInRegion, targetPoints) / Math.max(pointsInRegion, targetPoints);
+      const countRatio = Math.min(pointsInRegion, targetTotal) / Math.max(pointsInRegion, targetTotal);
       
-      // 5. Calculate final match score with more weight on pattern
+      // 5. Calculate final score with more weight on pattern
       const finalScore = (patternSimilarity * 0.7) + (countRatio * 0.3);
       
-      // Debug output every 30 frames
+      // Debug output
       if (frameCountRef.current % 30 === 0) {
-        console.log(`Pattern similarity: ${(patternSimilarity * 100).toFixed(1)}%, ` +
-                    `Count similarity: ${(countRatio * 100).toFixed(1)}%, ` +
-                    `Final score: ${(finalScore * 100).toFixed(1)}%`);
+        console.log(`Pattern: ${(patternSimilarity * 100).toFixed(1)}%, ` +
+                    `Count: ${(countRatio * 100).toFixed(1)}%, ` +
+                    `Score: ${(finalScore * 100).toFixed(1)}%`);
       }
       
       return finalScore;
@@ -321,9 +325,9 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
           
           // Tracking stability counter - ensure tracking is stable before rendering AR
           if (shouldBeTracking) {
-            trackingStabilityCounter.current++;
+            trackingStabilityCounter.current += 1; // Standard increment for stability
             
-            // Only set tracking confirmed after sufficient stable frames
+            // Set tracking confirmed once we reach the threshold
             if (trackingStabilityCounter.current >= TRACKING_STABILITY_THRESHOLD && !trackingConfirmed) {
               console.log('Tracking confirmed after stability threshold');
               setTrackingConfirmed(true);
@@ -453,9 +457,15 @@ function Camera({ videoUrl, trackingData, onTrackingUpdate }: CameraProps) {
       )}
       
       {/* Add a visual indicator for tracking status */}
+      {!isTracking && !cameraError && cameraReady && (
+        <div className="tracking-guide">
+          Point camera at the target image
+        </div>
+      )}
+      
       {isTracking && !trackingConfirmed && (
         <div className="tracking-stabilizing">
-          Stabilizing tracking ({trackingStabilityCounter.current}/{TRACKING_STABILITY_THRESHOLD})...
+          Image found! Hold steady... {Math.min(Math.round((trackingStabilityCounter.current / TRACKING_STABILITY_THRESHOLD) * 100), 100)}%
         </div>
       )}
     </div>
